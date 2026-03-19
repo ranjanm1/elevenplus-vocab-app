@@ -10,13 +10,24 @@ type UserInfo = {
   fullName?: string;
 };
 
+type QuizResult = {
+  id: string;
+  score: number;
+  total_questions: number;
+  percentage: number;
+  created_at: string;
+};
+
 export default function DashboardPage() {
   const [user, setUser] = useState<UserInfo | null>(null);
+  const [latestResult, setLatestResult] = useState<QuizResult | null>(null);
+  const [quizCount, setQuizCount] = useState(0);
+  const [bestScore, setBestScore] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
-    async function loadSession() {
+    async function loadSessionAndResults() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -31,10 +42,26 @@ export default function DashboardPage() {
         fullName: session.user.user_metadata?.full_name,
       });
 
+      const { data: results } = await supabase
+        .from("quiz_results")
+        .select("*")
+        .eq("user_id", session.user.id)
+        .order("created_at", { ascending: false });
+
+      if (results && results.length > 0) {
+        setLatestResult(results[0]);
+        setQuizCount(results.length);
+        setBestScore(Math.max(...results.map((r) => r.percentage)));
+      } else {
+        setLatestResult(null);
+        setQuizCount(0);
+        setBestScore(null);
+      }
+
       setLoading(false);
     }
 
-    loadSession();
+    loadSessionAndResults();
   }, [router]);
 
   if (loading) {
@@ -57,9 +84,31 @@ export default function DashboardPage() {
             Welcome, {displayName}
           </h1>
           <p className="mt-2 text-slate-700">
-            Here you will be able to track vocabulary progress, manage child
-            profiles, and access personalised learning tools.
+            Track vocabulary progress, review quiz performance, and continue learning.
           </p>
+        </div>
+
+        <div className="mb-8 grid gap-4 md:grid-cols-3">
+          <div className="rounded-xl border bg-white p-6 shadow-sm">
+            <h2 className="text-sm font-medium text-slate-500">Quizzes completed</h2>
+            <p className="mt-2 text-3xl font-bold text-slate-900">{quizCount}</p>
+          </div>
+
+          <div className="rounded-xl border bg-white p-6 shadow-sm">
+            <h2 className="text-sm font-medium text-slate-500">Best score</h2>
+            <p className="mt-2 text-3xl font-bold text-slate-900">
+              {bestScore !== null ? `${bestScore}%` : "—"}
+            </p>
+          </div>
+
+          <div className="rounded-xl border bg-white p-6 shadow-sm">
+            <h2 className="text-sm font-medium text-slate-500">Latest result</h2>
+            <p className="mt-2 text-3xl font-bold text-slate-900">
+              {latestResult
+                ? `${latestResult.score}/${latestResult.total_questions}`
+                : "—"}
+            </p>
+          </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
@@ -89,6 +138,39 @@ export default function DashboardPage() {
               Signed in as: {user?.email}
             </p>
           </div>
+        </div>
+
+        <div className="mt-8 rounded-xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">Recent quiz summary</h2>
+
+          {!latestResult ? (
+            <p className="mt-3 text-sm text-slate-600">
+              No quiz attempts yet. Start your first quiz to see progress here.
+            </p>
+          ) : (
+            <div className="mt-4 grid gap-4 md:grid-cols-3">
+              <div className="rounded-lg bg-slate-50 p-4">
+                <h3 className="text-sm font-medium text-slate-500">Score</h3>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {latestResult.score}/{latestResult.total_questions}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-slate-50 p-4">
+                <h3 className="text-sm font-medium text-slate-500">Accuracy</h3>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {latestResult.percentage}%
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-slate-50 p-4">
+                <h3 className="text-sm font-medium text-slate-500">Completed</h3>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {new Date(latestResult.created_at).toLocaleDateString()}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </main>
