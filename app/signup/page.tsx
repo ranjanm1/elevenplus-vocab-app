@@ -15,6 +15,16 @@ export default function SignupPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const router = useRouter();
+  const { error } = await supabase.auth.signUp({
+  email,
+  password,
+  options: {
+    emailRedirectTo: "https://elevenplus-vocab-app.vercel.app",
+    data: {
+      full_name: fullName,
+    },
+  },
+});
 
   useEffect(() => {
     async function checkSession() {
