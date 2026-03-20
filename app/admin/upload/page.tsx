@@ -117,7 +117,9 @@ export default function AdminUploadPage() {
         };
       });
 
-      const { error } = await supabase.from("vocabulary_words").insert(records);
+      const { error } = await supabase
+        .from("vocabulary_words")
+        .upsert(records, { onConflict: "slug" });
 
       if (error) {
         setErrorMessage(error.message);
