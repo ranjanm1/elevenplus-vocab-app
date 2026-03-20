@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 
@@ -133,6 +133,39 @@ export default function AdminWordsPage() {
     setActionLoadingId(null);
   }
 
+  const summary = useMemo(() => {
+    const total = words.length;
+    const free = words.filter((w) => !w.premium_only).length;
+    const premium = words.filter((w) => w.premium_only).length;
+    const active = words.filter((w) => w.active).length;
+    const archived = words.filter((w) => !w.active).length;
+
+    const easy = words.filter(
+      (w) => (w.difficulty || "").toLowerCase() === "easy"
+    ).length;
+    const medium = words.filter(
+      (w) => (w.difficulty || "").toLowerCase() === "medium"
+    ).length;
+    const hard = words.filter(
+      (w) => (w.difficulty || "").toLowerCase() === "hard"
+    ).length;
+    const difficult = words.filter(
+      (w) => (w.difficulty || "").toLowerCase() === "difficult"
+    ).length;
+
+    return {
+      total,
+      free,
+      premium,
+      active,
+      archived,
+      easy,
+      medium,
+      hard,
+      difficult,
+    };
+  }, [words]);
+
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-50">
@@ -172,9 +205,63 @@ export default function AdminWordsPage() {
         <div className="mb-8 rounded-2xl border border-green-200 bg-green-50 p-6 shadow-sm">
           <h1 className="text-3xl font-bold text-green-950">Manage Words</h1>
           <p className="mt-2 text-slate-700">
-            Welcome, {displayName}. Review, archive, activate, or delete
-            vocabulary entries.
+            Welcome, {displayName}. Review, archive, activate, delete, and monitor vocabulary entries.
           </p>
+        </div>
+
+        <div className="mb-8 grid gap-4 md:grid-cols-3 xl:grid-cols-5">
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Total words</p>
+            <p className="mt-2 text-3xl font-bold text-slate-900">{summary.total}</p>
+          </div>
+
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Free words</p>
+            <p className="mt-2 text-3xl font-bold text-green-700">{summary.free}</p>
+          </div>
+
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Premium words</p>
+            <p className="mt-2 text-3xl font-bold text-amber-700">{summary.premium}</p>
+          </div>
+
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Active</p>
+            <p className="mt-2 text-3xl font-bold text-green-700">{summary.active}</p>
+          </div>
+
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Archived</p>
+            <p className="mt-2 text-3xl font-bold text-slate-700">{summary.archived}</p>
+          </div>
+        </div>
+
+        <div className="mb-8 rounded-xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Difficulty breakdown
+          </h2>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-4">
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">Easy</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{summary.easy}</p>
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">Medium</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{summary.medium}</p>
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">Hard</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{summary.hard}</p>
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">Difficult</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{summary.difficult}</p>
+            </div>
+          </div>
         </div>
 
         {errorMessage && (
