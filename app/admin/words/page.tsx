@@ -27,7 +27,7 @@ type VocabularyWord = {
   quiz_option_3: string | null;
 };
 
-type EditFormState = {
+type EditForm = {
   id: string;
   word: string;
   definition: string;
@@ -55,18 +55,15 @@ export default function AdminWordsPage() {
   const [loading, setLoading] = useState(true);
 
   const [words, setWords] = useState<VocabularyWord[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [search, setSearch] = useState("");
+  const [editForm, setEditForm] = useState<EditForm | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const [editingWordId, setEditingWordId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<EditFormState | null>(null);
-  const [savingEdit, setSavingEdit] = useState(false);
-
-  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    async function loadSessionAndRole() {
+    async function initialisePage() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -98,15 +95,13 @@ export default function AdminWordsPage() {
       setLoading(false);
     }
 
-    loadSessionAndRole();
+    initialisePage();
   }, [router]);
 
   async function loadWords() {
     const { data, error } = await supabase
       .from("vocabulary_words")
-      .select(
-        "id, word, slug, definition, difficulty, example_sentence, synonyms, antonyms, topic, premium_only, active, quiz_option_1, quiz_option_2, quiz_option_3"
-      )
+      .select("*")
       .order("word", { ascending: true });
 
     if (error) {
@@ -117,66 +112,9 @@ export default function AdminWordsPage() {
     setWords((data as VocabularyWord[]) || []);
   }
 
-  async function handleToggleActive(wordId: string, currentActive: boolean) {
-    setActionLoadingId(wordId);
+  function handleEdit(word: VocabularyWord) {
     setSuccessMessage("");
     setErrorMessage("");
-
-    const { error } = await supabase
-      .from("vocabulary_words")
-      .update({ active: !currentActive })
-      .eq("id", wordId);
-
-    if (error) {
-      setErrorMessage(error.message);
-      setActionLoadingId(null);
-      return;
-    }
-
-    setSuccessMessage(
-      currentActive ? "Word archived successfully." : "Word activated successfully."
-    );
-    await loadWords();
-    setActionLoadingId(null);
-  }
-
-  async function handleDeleteWord(wordId: string, wordName: string) {
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${wordName}"? This cannot be undone.`
-    );
-
-    if (!confirmed) return;
-
-    setActionLoadingId(wordId);
-    setSuccessMessage("");
-    setErrorMessage("");
-
-    const { error } = await supabase
-      .from("vocabulary_words")
-      .delete()
-      .eq("id", wordId);
-
-    if (error) {
-      setErrorMessage(error.message);
-      setActionLoadingId(null);
-      return;
-    }
-
-    setSuccessMessage(`"${wordName}" deleted successfully.`);
-
-    if (editingWordId === wordId) {
-      setEditingWordId(null);
-      setEditForm(null);
-    }
-
-    await loadWords();
-    setActionLoadingId(null);
-  }
-
-  function handleEditClick(word: VocabularyWord) {
-    setSuccessMessage("");
-    setErrorMessage("");
-    setEditingWordId(word.id);
 
     setEditForm({
       id: word.id,
@@ -193,24 +131,19 @@ export default function AdminWordsPage() {
       quiz_option_2: word.quiz_option_2 || "",
       quiz_option_3: word.quiz_option_3 || "",
     });
+
+    setTimeout(() => {
+      document.getElementById("edit-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 100);
   }
 
-  function handleEditFieldChange(
-    field: keyof EditFormState,
-    value: string | boolean
-  ) {
+  async function saveEdit() {
     if (!editForm) return;
 
-    setEditForm({
-      ...editForm,
-      [field]: value,
-    });
-  }
-
-  async function handleSaveEdit() {
-    if (!editForm) return;
-
-    setSavingEdit(true);
+    setSaving(true);
     setSuccessMessage("");
     setErrorMessage("");
 
@@ -235,38 +168,76 @@ export default function AdminWordsPage() {
 
     if (error) {
       setErrorMessage(error.message);
-      setSavingEdit(false);
+      setSaving(false);
       return;
     }
 
     setSuccessMessage(`"${editForm.word}" updated successfully.`);
+    setEditForm(null);
     await loadWords();
-    setSavingEdit(false);
+    setSaving(false);
+  }
+
+  async function handleDelete(wordId: string, wordName: string) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${wordName}"? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setSuccessMessage("");
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("vocabulary_words")
+      .delete()
+      .eq("id", wordId);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSuccessMessage(`"${wordName}" deleted successfully.`);
+    if (editForm?.id === wordId) {
+      setEditForm(null);
+    }
+    await loadWords();
+  }
+
+  async function handleToggleActive(wordId: string, currentActive: boolean) {
+    setSuccessMessage("");
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("vocabulary_words")
+      .update({ active: !currentActive })
+      .eq("id", wordId);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSuccessMessage(
+      currentActive ? "Word archived successfully." : "Word activated successfully."
+    );
+    await loadWords();
   }
 
   const filteredWords = useMemo(() => {
-    const q = searchTerm.trim().toLowerCase();
+    const q = search.trim().toLowerCase();
     if (!q) return words;
 
-    return words.filter((word) => {
+    return words.filter((w) => {
       return (
-        word.word.toLowerCase().includes(q) ||
-        word.definition.toLowerCase().includes(q) ||
-        (word.topic || "").toLowerCase().includes(q) ||
-        (word.difficulty || "").toLowerCase().includes(q)
+        w.word.toLowerCase().includes(q) ||
+        (w.definition || "").toLowerCase().includes(q) ||
+        (w.topic || "").toLowerCase().includes(q) ||
+        (w.difficulty || "").toLowerCase().includes(q)
       );
     });
-  }, [words, searchTerm]);
-
-  const summary = useMemo(() => {
-    return {
-      total: words.length,
-      free: words.filter((w) => !w.premium_only).length,
-      premium: words.filter((w) => w.premium_only).length,
-      active: words.filter((w) => w.active).length,
-      archived: words.filter((w) => !w.active).length,
-    };
-  }, [words]);
+  }, [words, search]);
 
   if (loading) {
     return (
@@ -299,59 +270,26 @@ export default function AdminWordsPage() {
     );
   }
 
-  const displayName = user?.fullName || user?.email || "Admin";
-
   return (
     <main className="min-h-screen bg-slate-50">
       <section className="mx-auto max-w-6xl px-6 py-10">
-        <div className="mb-8 rounded-2xl border border-green-200 bg-green-50 p-6 shadow-sm">
-          <h1 className="text-3xl font-bold text-green-950">Manage Words</h1>
-          <p className="mt-2 text-slate-700">
-            Welcome, {displayName}. Search, edit, archive, or delete vocabulary entries.
-          </p>
-        </div>
-
-        <div className="mb-8 grid gap-4 md:grid-cols-5">
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Total words</p>
-            <p className="mt-2 text-3xl font-bold text-slate-900">{summary.total}</p>
-          </div>
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Free</p>
-            <p className="mt-2 text-3xl font-bold text-green-700">{summary.free}</p>
-          </div>
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Premium</p>
-            <p className="mt-2 text-3xl font-bold text-amber-700">{summary.premium}</p>
-          </div>
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Active</p>
-            <p className="mt-2 text-3xl font-bold text-green-700">{summary.active}</p>
-          </div>
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Archived</p>
-            <p className="mt-2 text-3xl font-bold text-slate-700">{summary.archived}</p>
-          </div>
-        </div>
+        <h1 className="mb-6 text-3xl font-bold text-slate-900">Manage Words</h1>
 
         <div className="mb-6 rounded-xl border bg-white p-6 shadow-sm">
           <label
-            htmlFor="wordSearch"
+            htmlFor="word-search"
             className="mb-2 block text-sm font-medium text-slate-700"
           >
-            Search words
+            Search word
           </label>
           <input
-            id="wordSearch"
+            id="word-search"
             type="text"
-            placeholder="Search by word, definition, topic, or difficulty..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
+            placeholder="Search word..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
           />
-          <p className="mt-2 text-sm text-slate-500">
-            Showing {filteredWords.length} of {words.length} words
-          </p>
         </div>
 
         {errorMessage && (
@@ -376,29 +314,19 @@ export default function AdminWordsPage() {
                   <th className="px-4 py-3 font-medium">Topic</th>
                   <th className="px-4 py-3 font-medium">Access</th>
                   <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Actions</th>
+                  <th className="px-4 py-3 font-medium">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredWords.map((word) => (
-                  <tr key={word.id} className="border-t">
-                    <td className="px-4 py-4">
-                      <div>
-                        <p className="font-medium text-slate-900">{word.word}</p>
-                        <p className="mt-1 text-xs text-slate-500">{word.slug}</p>
-                      </div>
-                    </td>
-
+                {filteredWords.map((w) => (
+                  <tr key={w.id} className="border-t">
+                    <td className="px-4 py-4 text-slate-900">{w.word}</td>
                     <td className="px-4 py-4 text-slate-700">
-                      {word.difficulty || "—"}
+                      {w.difficulty || "—"}
                     </td>
-
-                    <td className="px-4 py-4 text-slate-700">
-                      {word.topic || "—"}
-                    </td>
-
+                    <td className="px-4 py-4 text-slate-700">{w.topic || "—"}</td>
                     <td className="px-4 py-4">
-                      {word.premium_only ? (
+                      {w.premium_only ? (
                         <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700">
                           Premium
                         </span>
@@ -408,9 +336,8 @@ export default function AdminWordsPage() {
                         </span>
                       )}
                     </td>
-
                     <td className="px-4 py-4">
-                      {word.active ? (
+                      {w.active ? (
                         <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
                           Active
                         </span>
@@ -420,12 +347,11 @@ export default function AdminWordsPage() {
                         </span>
                       )}
                     </td>
-
                     <td className="px-4 py-4">
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => handleEditClick(word)}
+                          onClick={() => handleEdit(w)}
                           className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700"
                         >
                           Edit
@@ -433,22 +359,16 @@ export default function AdminWordsPage() {
 
                         <button
                           type="button"
-                          onClick={() => handleToggleActive(word.id, word.active)}
-                          disabled={actionLoadingId === word.id}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => handleToggleActive(w.id, w.active)}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                         >
-                          {actionLoadingId === word.id
-                            ? "Working..."
-                            : word.active
-                            ? "Archive"
-                            : "Activate"}
+                          {w.active ? "Archive" : "Activate"}
                         </button>
 
                         <button
                           type="button"
-                          onClick={() => handleDeleteWord(word.id, word.word)}
-                          disabled={actionLoadingId === word.id}
-                          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => handleDelete(w.id, w.word)}
+                          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700"
                         >
                           Delete
                         </button>
@@ -459,11 +379,8 @@ export default function AdminWordsPage() {
 
                 {filteredWords.length === 0 && (
                   <tr>
-                    <td
-                      colSpan={6}
-                      className="px-4 py-8 text-center text-slate-500"
-                    >
-                      No vocabulary words found for this search.
+                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                      No words found.
                     </td>
                   </tr>
                 )}
@@ -473,7 +390,10 @@ export default function AdminWordsPage() {
         </div>
 
         {editForm && (
-          <div className="mt-8 rounded-xl border bg-white p-6 shadow-sm">
+          <div
+            id="edit-panel"
+            className="mt-8 rounded-xl border bg-white p-6 shadow-sm"
+          >
             <div className="mb-6 flex items-center justify-between">
               <h2 className="text-2xl font-semibold text-slate-900">
                 Edit word: {editForm.word}
@@ -481,10 +401,7 @@ export default function AdminWordsPage() {
 
               <button
                 type="button"
-                onClick={() => {
-                  setEditingWordId(null);
-                  setEditForm(null);
-                }}
+                onClick={() => setEditForm(null)}
                 className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Cancel
@@ -497,9 +414,10 @@ export default function AdminWordsPage() {
                   Word
                 </label>
                 <input
-                  type="text"
                   value={editForm.word}
-                  onChange={(e) => handleEditFieldChange("word", e.target.value)}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, word: e.target.value })
+                  }
                   className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
                 />
               </div>
@@ -511,7 +429,7 @@ export default function AdminWordsPage() {
                 <select
                   value={editForm.difficulty}
                   onChange={(e) =>
-                    handleEditFieldChange("difficulty", e.target.value)
+                    setEditForm({ ...editForm, difficulty: e.target.value })
                   }
                   className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
                 >
@@ -529,11 +447,11 @@ export default function AdminWordsPage() {
                 Definition
               </label>
               <textarea
+                rows={3}
                 value={editForm.definition}
                 onChange={(e) =>
-                  handleEditFieldChange("definition", e.target.value)
+                  setEditForm({ ...editForm, definition: e.target.value })
                 }
-                rows={3}
                 className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
               />
             </div>
@@ -543,11 +461,14 @@ export default function AdminWordsPage() {
                 Example sentence
               </label>
               <textarea
+                rows={2}
                 value={editForm.example_sentence}
                 onChange={(e) =>
-                  handleEditFieldChange("example_sentence", e.target.value)
+                  setEditForm({
+                    ...editForm,
+                    example_sentence: e.target.value,
+                  })
                 }
-                rows={2}
                 className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
               />
             </div>
@@ -558,10 +479,9 @@ export default function AdminWordsPage() {
                   Synonyms
                 </label>
                 <input
-                  type="text"
                   value={editForm.synonyms}
                   onChange={(e) =>
-                    handleEditFieldChange("synonyms", e.target.value)
+                    setEditForm({ ...editForm, synonyms: e.target.value })
                   }
                   className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
                 />
@@ -572,10 +492,9 @@ export default function AdminWordsPage() {
                   Antonyms
                 </label>
                 <input
-                  type="text"
                   value={editForm.antonyms}
                   onChange={(e) =>
-                    handleEditFieldChange("antonyms", e.target.value)
+                    setEditForm({ ...editForm, antonyms: e.target.value })
                   }
                   className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
                 />
@@ -587,9 +506,10 @@ export default function AdminWordsPage() {
                 Topic
               </label>
               <input
-                type="text"
                 value={editForm.topic}
-                onChange={(e) => handleEditFieldChange("topic", e.target.value)}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, topic: e.target.value })
+                }
                 className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
               />
             </div>
@@ -600,10 +520,9 @@ export default function AdminWordsPage() {
                   Quiz option 1
                 </label>
                 <input
-                  type="text"
                   value={editForm.quiz_option_1}
                   onChange={(e) =>
-                    handleEditFieldChange("quiz_option_1", e.target.value)
+                    setEditForm({ ...editForm, quiz_option_1: e.target.value })
                   }
                   className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
                 />
@@ -614,10 +533,9 @@ export default function AdminWordsPage() {
                   Quiz option 2
                 </label>
                 <input
-                  type="text"
                   value={editForm.quiz_option_2}
                   onChange={(e) =>
-                    handleEditFieldChange("quiz_option_2", e.target.value)
+                    setEditForm({ ...editForm, quiz_option_2: e.target.value })
                   }
                   className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
                 />
@@ -628,23 +546,22 @@ export default function AdminWordsPage() {
                   Quiz option 3
                 </label>
                 <input
-                  type="text"
                   value={editForm.quiz_option_3}
                   onChange={(e) =>
-                    handleEditFieldChange("quiz_option_3", e.target.value)
+                    setEditForm({ ...editForm, quiz_option_3: e.target.value })
                   }
                   className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
                 />
               </div>
             </div>
 
-            <div className="mt-6 flex flex-wrap gap-6">
+            <div className="mt-6 flex items-center gap-6">
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
                   checked={editForm.premium_only}
                   onChange={(e) =>
-                    handleEditFieldChange("premium_only", e.target.checked)
+                    setEditForm({ ...editForm, premium_only: e.target.checked })
                   }
                 />
                 Premium only
@@ -655,7 +572,7 @@ export default function AdminWordsPage() {
                   type="checkbox"
                   checked={editForm.active}
                   onChange={(e) =>
-                    handleEditFieldChange("active", e.target.checked)
+                    setEditForm({ ...editForm, active: e.target.checked })
                   }
                 />
                 Active
@@ -665,11 +582,11 @@ export default function AdminWordsPage() {
             <div className="mt-6">
               <button
                 type="button"
-                onClick={handleSaveEdit}
-                disabled={savingEdit}
+                onClick={saveEdit}
+                disabled={saving}
                 className="rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {savingEdit ? "Saving..." : "Save changes"}
+                {saving ? "Saving..." : "Save changes"}
               </button>
             </div>
           </div>

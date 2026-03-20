@@ -1,53 +1,61 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
-
-type UserInfo = {
-  email?: string;
-  fullName?: string;
-};
+import { useEffect, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 export default function Header() {
-  const [user, setUser] = useState<UserInfo | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminMenuOpen, setAdminMenuOpen] = useState(false);
+  const adminMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    async function loadSession() {
+    async function loadUser() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
-      if (session?.user) {
-        setUser({
-          email: session.user.email,
-          fullName: session.user.user_metadata?.full_name,
-        });
-      } else {
+      if (!session?.user) {
         setUser(null);
+        setIsAdmin(false);
+        return;
       }
 
-      setLoading(false);
+      setUser(session.user);
+
+      const { data } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", session.user.id)
+        .single();
+
+      setIsAdmin(data?.role === "admin");
     }
 
-    loadSession();
+    loadUser();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setUser({
-          email: session.user.email,
-          fullName: session.user.user_metadata?.full_name,
-        });
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
+    } = supabase.auth.onAuthStateChange(async () => {
+      await loadUser();
     });
 
     return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        adminMenuRef.current &&
+        !adminMenuRef.current.contains(event.target as Node)
+      ) {
+        setAdminMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   async function handleLogout() {
@@ -55,60 +63,87 @@ export default function Header() {
     window.location.href = "/";
   }
 
-  const displayName = user?.fullName || user?.email || "Account";
-
   return (
-    <header className="sticky top-0 z-50 border-b bg-green-50 shadow-sm">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-        <div>
-          <h1 className="text-2xl font-bold text-green-900">11+ Vocabulary</h1>
-          <p className="text-sm text-green-700">ElevenPlusSucceed</p>
-        </div>
+    <header className="sticky top-0 z-50 border-b border-green-200 bg-green-100 shadow-sm">
+      <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <Link href="/" className="text-2xl font-bold text-green-950">
+          11+ Succeed
+        </Link>
 
-        <div className="flex items-center gap-6">
-          <nav className="flex gap-4 text-sm font-medium text-green-800">
-            <Link href="/" className="hover:text-green-900">
-              Home
-            </Link>
-            <Link href="/words" className="hover:text-green-900">
-              Words
-            </Link>
-            <Link href="/quiz" className="hover:text-green-900">
-              Quiz
-            </Link>
-            {user && (
-              <Link href="/dashboard" className="hover:text-green-900">
-                Dashboard
-              </Link>
-            )}
-          </nav>
+        <div className="flex items-center gap-6 text-sm font-medium">
+          <Link href="/dashboard" className="text-slate-800 hover:text-green-900">
+            Dashboard
+          </Link>
 
-          <div className="flex items-center gap-3 text-sm">
-            {!loading && user ? (
-              <>
-                <span className="rounded-full bg-white px-3 py-1 text-slate-700 shadow-sm">
-                  {displayName}
-                </span>
-                <button
-                  onClick={handleLogout}
-                  className="rounded-lg bg-green-700 px-3 py-2 font-medium text-white hover:bg-green-800"
-                >
-                  Logout
-                </button>
-              </>
-            ) : !loading ? (
-              <Link
-                href="/login"
-                className="rounded-lg bg-green-700 px-3 py-2 font-medium text-white hover:bg-green-800"
+          <Link href="/words" className="text-slate-800 hover:text-green-900">
+            Words
+          </Link>
+
+          <Link href="/quiz" className="text-slate-800 hover:text-green-900">
+            Quiz
+          </Link>
+
+          {isAdmin && (
+            <div className="relative" ref={adminMenuRef}>
+              <button
+                type="button"
+                onClick={() => setAdminMenuOpen((prev) => !prev)}
+                className="rounded-lg px-3 py-2 text-slate-800 hover:bg-green-200 hover:text-green-950"
               >
-                Login
-              </Link>
-            ) : (
-              <span className="text-slate-500">Loading...</span>
-            )}
-          </div>
+                Admin ▾
+              </button>
+
+              {adminMenuOpen && (
+                <div className="absolute right-0 mt-2 w-52 rounded-xl border border-slate-200 bg-white py-2 shadow-lg">
+                  <Link
+                    href="/admin"
+                    onClick={() => setAdminMenuOpen(false)}
+                    className="block px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+                  >
+                    Admin Dashboard
+                  </Link>
+
+                  <Link
+                    href="/admin/words"
+                    onClick={() => setAdminMenuOpen(false)}
+                    className="block px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+                  >
+                    Manage Words
+                  </Link>
+
+                  <Link
+                    href="/admin/upload"
+                    onClick={() => setAdminMenuOpen(false)}
+                    className="block px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+                  >
+                    Upload Words
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+
+          {user ? (
+            <div className="flex items-center gap-3">
+              <span className="text-slate-700">{user.email}</span>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="rounded-lg bg-green-700 px-3 py-2 text-white hover:bg-green-800"
+              >
+                Logout
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/login"
+              className="rounded-lg bg-green-700 px-3 py-2 text-white hover:bg-green-800"
+            >
+              Login
+            </Link>
+          )}
         </div>
-      </div>
+      </nav>
     </header>
   );
 }
