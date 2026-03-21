@@ -24,41 +24,60 @@ export default function DashboardPage() {
   const [quizCount, setQuizCount] = useState(0);
   const [bestScore, setBestScore] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
   const router = useRouter();
 
   useEffect(() => {
     async function loadSessionAndResults() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      setLoading(true);
+      setErrorMessage("");
 
-      if (!session?.user) {
-        router.push("/login");
-        return;
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError) {
+          throw new Error(sessionError.message);
+        }
+
+        if (!session?.user) {
+          router.push("/login");
+          return;
+        }
+
+        setUser({
+          email: session.user.email,
+          fullName: session.user.user_metadata?.full_name,
+        });
+
+        const { data: results, error: resultsError } = await supabase
+          .from("quiz_results")
+          .select("*")
+          .eq("user_id", session.user.id)
+          .order("created_at", { ascending: false });
+
+        if (resultsError) {
+          throw new Error(resultsError.message);
+        }
+
+        if (results && results.length > 0) {
+          setLatestResult(results[0]);
+          setQuizCount(results.length);
+          setBestScore(Math.max(...results.map((r) => r.percentage)));
+        } else {
+          setLatestResult(null);
+          setQuizCount(0);
+          setBestScore(null);
+        }
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to load dashboard."
+        );
+      } finally {
+        setLoading(false);
       }
-
-      setUser({
-        email: session.user.email,
-        fullName: session.user.user_metadata?.full_name,
-      });
-
-      const { data: results } = await supabase
-        .from("quiz_results")
-        .select("*")
-        .eq("user_id", session.user.id)
-        .order("created_at", { ascending: false });
-
-      if (results && results.length > 0) {
-        setLatestResult(results[0]);
-        setQuizCount(results.length);
-        setBestScore(Math.max(...results.map((r) => r.percentage)));
-      } else {
-        setLatestResult(null);
-        setQuizCount(0);
-        setBestScore(null);
-      }
-
-      setLoading(false);
     }
 
     loadSessionAndResults();
@@ -69,6 +88,25 @@ export default function DashboardPage() {
       <main className="min-h-screen bg-slate-50">
         <section className="mx-auto max-w-5xl px-6 py-10">
           <p className="text-slate-600">Loading dashboard...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <section className="mx-auto max-w-3xl px-6 py-10">
+          <div className="rounded-2xl border bg-white p-8 shadow-sm">
+            <h1 className="text-2xl font-bold text-slate-900">Dashboard unavailable</h1>
+            <p className="mt-3 text-slate-600">{errorMessage}</p>
+            <Link
+              href="/login"
+              className="mt-6 inline-block rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+            >
+              Go to login
+            </Link>
+          </div>
         </section>
       </main>
     );

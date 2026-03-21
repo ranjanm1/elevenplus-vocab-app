@@ -4,41 +4,82 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
+type SessionUser = {
+  id: string;
+  email?: string;
+};
+
 export default function Header() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<SessionUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
   const adminMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     async function loadUser() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
 
-      if (!session?.user) {
+        if (sessionError) {
+          throw new Error(sessionError.message);
+        }
+
+        if (!session?.user) {
+          setUser(null);
+          setIsAdmin(false);
+          return;
+        }
+
+        setUser({
+          id: session.user.id,
+          email: session.user.email,
+        });
+
+        const { data, error } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (error) {
+          setIsAdmin(false);
+          return;
+        }
+
+        setIsAdmin(data?.role === "admin");
+      } catch {
         setUser(null);
         setIsAdmin(false);
-        return;
       }
-
-      setUser(session.user);
-
-      const { data } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", session.user.id)
-        .single();
-
-      setIsAdmin(data?.role === "admin");
     }
 
     loadUser();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async () => {
-      await loadUser();
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!session?.user) {
+        setUser(null);
+        setIsAdmin(false);
+        return;
+      }
+
+      setUser({
+        id: session.user.id,
+        email: session.user.email,
+      });
+
+      const { data } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", session.user.id)
+        .maybeSingle();
+
+      setIsAdmin(data?.role === "admin");
     });
 
     return () => subscription.unsubscribe();
@@ -59,8 +100,30 @@ export default function Header() {
   }, []);
 
   async function handleLogout() {
-    await supabase.auth.signOut();
-    window.location.href = "/";
+    setLogoutLoading(true);
+
+    const fallback = setTimeout(() => {
+      window.location.href = "/login";
+    }, 2500);
+
+    try {
+      const { error } = await supabase.auth.signOut({ scope: "local" });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setUser(null);
+      setIsAdmin(false);
+      setAdminMenuOpen(false);
+
+      clearTimeout(fallback);
+      window.location.href = "/login";
+    } catch (error) {
+      console.error("Logout failed:", error);
+      clearTimeout(fallback);
+      window.location.href = "/login";
+    }
   }
 
   return (
@@ -129,9 +192,10 @@ export default function Header() {
               <button
                 type="button"
                 onClick={handleLogout}
-                className="rounded-lg bg-green-700 px-3 py-2 text-white hover:bg-green-800"
+                disabled={logoutLoading}
+                className="rounded-lg bg-green-700 px-3 py-2 text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Logout
+                {logoutLoading ? "Logging out..." : "Logout"}
               </button>
             </div>
           ) : (

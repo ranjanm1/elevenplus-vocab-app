@@ -27,34 +27,48 @@ export default function AdminUploadPage() {
 
   useEffect(() => {
     async function loadSessionAndRole() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      setLoading(true);
+      setErrorMessage("");
 
-      if (!session?.user) {
-        router.push("/login");
-        return;
-      }
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
 
-      setUser({
-        email: session.user.email,
-        fullName: session.user.user_metadata?.full_name,
-      });
+        if (sessionError) {
+          throw new Error(sessionError.message);
+        }
 
-      const { data: roleRow, error: roleError } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", session.user.id)
-        .single();
+        if (!session?.user) {
+          router.push("/login");
+          return;
+        }
 
-      if (roleError || !roleRow || roleRow.role !== "admin") {
+        setUser({
+          email: session.user.email,
+          fullName: session.user.user_metadata?.full_name,
+        });
+
+        const { data: roleRow, error: roleError } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (roleError) {
+          throw new Error(roleError.message);
+        }
+
+        setIsAdmin(roleRow?.role === "admin");
+      } catch (error) {
         setIsAdmin(false);
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to load upload page."
+        );
+      } finally {
         setLoading(false);
-        return;
       }
-
-      setIsAdmin(true);
-      setLoading(false);
     }
 
     loadSessionAndRole();
@@ -72,9 +86,7 @@ export default function AdminUploadPage() {
         .filter((line) => line.length > 0);
 
       if (lines.length === 0) {
-        setErrorMessage("Please paste at least one CSV row.");
-        setSubmitting(false);
-        return;
+        throw new Error("Please paste at least one CSV row.");
       }
 
       const records = lines.map((line, index) => {
@@ -122,9 +134,7 @@ export default function AdminUploadPage() {
         .upsert(records, { onConflict: "slug" });
 
       if (error) {
-        setErrorMessage(error.message);
-        setSubmitting(false);
-        return;
+        throw new Error(error.message);
       }
 
       setSuccessMessage(`${records.length} word(s) uploaded successfully.`);
@@ -133,9 +143,9 @@ export default function AdminUploadPage() {
       setErrorMessage(
         error instanceof Error ? error.message : "Upload failed."
       );
+    } finally {
+      setSubmitting(false);
     }
-
-    setSubmitting(false);
   }
 
   if (loading) {
@@ -143,6 +153,25 @@ export default function AdminUploadPage() {
       <main className="min-h-screen bg-slate-50">
         <section className="mx-auto max-w-5xl px-6 py-10">
           <p className="text-slate-600">Loading upload page...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (errorMessage && !isAdmin) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <section className="mx-auto max-w-3xl px-6 py-10">
+          <div className="rounded-2xl border bg-white p-8 shadow-sm text-center">
+            <h1 className="text-3xl font-bold text-slate-900">Something went wrong</h1>
+            <p className="mt-3 text-slate-600">{errorMessage}</p>
+            <Link
+              href="/dashboard"
+              className="mt-6 inline-block rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
+            >
+              Back to dashboard
+            </Link>
+          </div>
         </section>
       </main>
     );

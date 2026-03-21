@@ -64,52 +64,83 @@ export default function AdminWordsPage() {
 
   useEffect(() => {
     async function initialisePage() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      setLoading(true);
+      setErrorMessage("");
 
-      if (!session?.user) {
-        router.push("/login");
-        return;
-      }
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
 
-      setUser({
-        email: session.user.email,
-        fullName: session.user.user_metadata?.full_name,
-      });
+        if (sessionError) {
+          throw new Error(sessionError.message);
+        }
 
-      const { data: roleRow, error: roleError } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", session.user.id)
-        .single();
+        if (!session?.user) {
+          router.push("/login");
+          return;
+        }
 
-      if (roleError || !roleRow || roleRow.role !== "admin") {
+        setUser({
+          email: session.user.email,
+          fullName: session.user.user_metadata?.full_name,
+        });
+
+        const { data: roleRow, error: roleError } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (roleError) {
+          throw new Error(roleError.message);
+        }
+
+        setIsAdmin(roleRow?.role === "admin");
+
+        if (roleRow?.role === "admin") {
+          const { data, error } = await supabase
+            .from("vocabulary_words")
+            .select("*")
+            .order("word", { ascending: true });
+
+          if (error) {
+            throw new Error(error.message);
+          }
+
+          setWords((data as VocabularyWord[]) || []);
+        }
+      } catch (error) {
         setIsAdmin(false);
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to load words manager."
+        );
+      } finally {
         setLoading(false);
-        return;
       }
-
-      setIsAdmin(true);
-      await loadWords();
-      setLoading(false);
     }
 
     initialisePage();
   }, [router]);
 
   async function loadWords() {
-    const { data, error } = await supabase
-      .from("vocabulary_words")
-      .select("*")
-      .order("word", { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from("vocabulary_words")
+        .select("*")
+        .order("word", { ascending: true });
 
-    if (error) {
-      setErrorMessage(error.message);
-      return;
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setWords((data as VocabularyWord[]) || []);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to reload words."
+      );
     }
-
-    setWords((data as VocabularyWord[]) || []);
   }
 
   function handleEdit(word: VocabularyWord) {
@@ -147,35 +178,40 @@ export default function AdminWordsPage() {
     setSuccessMessage("");
     setErrorMessage("");
 
-    const { error } = await supabase
-      .from("vocabulary_words")
-      .update({
-        word: editForm.word.trim(),
-        slug: makeSlug(editForm.word),
-        definition: editForm.definition.trim(),
-        difficulty: editForm.difficulty.trim() || null,
-        example_sentence: editForm.example_sentence.trim() || null,
-        synonyms: editForm.synonyms.trim() || null,
-        antonyms: editForm.antonyms.trim() || null,
-        topic: editForm.topic.trim() || null,
-        premium_only: editForm.premium_only,
-        active: editForm.active,
-        quiz_option_1: editForm.quiz_option_1.trim() || null,
-        quiz_option_2: editForm.quiz_option_2.trim() || null,
-        quiz_option_3: editForm.quiz_option_3.trim() || null,
-      })
-      .eq("id", editForm.id);
+    try {
+      const { error } = await supabase
+        .from("vocabulary_words")
+        .update({
+          word: editForm.word.trim(),
+          slug: makeSlug(editForm.word),
+          definition: editForm.definition.trim(),
+          difficulty: editForm.difficulty.trim() || null,
+          example_sentence: editForm.example_sentence.trim() || null,
+          synonyms: editForm.synonyms.trim() || null,
+          antonyms: editForm.antonyms.trim() || null,
+          topic: editForm.topic.trim() || null,
+          premium_only: editForm.premium_only,
+          active: editForm.active,
+          quiz_option_1: editForm.quiz_option_1.trim() || null,
+          quiz_option_2: editForm.quiz_option_2.trim() || null,
+          quiz_option_3: editForm.quiz_option_3.trim() || null,
+        })
+        .eq("id", editForm.id);
 
-    if (error) {
-      setErrorMessage(error.message);
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setSuccessMessage(`"${editForm.word}" updated successfully.`);
+      setEditForm(null);
+      await loadWords();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to save changes."
+      );
+    } finally {
       setSaving(false);
-      return;
     }
-
-    setSuccessMessage(`"${editForm.word}" updated successfully.`);
-    setEditForm(null);
-    await loadWords();
-    setSaving(false);
   }
 
   async function handleDelete(wordId: string, wordName: string) {
@@ -188,41 +224,51 @@ export default function AdminWordsPage() {
     setSuccessMessage("");
     setErrorMessage("");
 
-    const { error } = await supabase
-      .from("vocabulary_words")
-      .delete()
-      .eq("id", wordId);
+    try {
+      const { error } = await supabase
+        .from("vocabulary_words")
+        .delete()
+        .eq("id", wordId);
 
-    if (error) {
-      setErrorMessage(error.message);
-      return;
-    }
+      if (error) {
+        throw new Error(error.message);
+      }
 
-    setSuccessMessage(`"${wordName}" deleted successfully.`);
-    if (editForm?.id === wordId) {
-      setEditForm(null);
+      setSuccessMessage(`"${wordName}" deleted successfully.`);
+      if (editForm?.id === wordId) {
+        setEditForm(null);
+      }
+      await loadWords();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to delete word."
+      );
     }
-    await loadWords();
   }
 
   async function handleToggleActive(wordId: string, currentActive: boolean) {
     setSuccessMessage("");
     setErrorMessage("");
 
-    const { error } = await supabase
-      .from("vocabulary_words")
-      .update({ active: !currentActive })
-      .eq("id", wordId);
+    try {
+      const { error } = await supabase
+        .from("vocabulary_words")
+        .update({ active: !currentActive })
+        .eq("id", wordId);
 
-    if (error) {
-      setErrorMessage(error.message);
-      return;
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setSuccessMessage(
+        currentActive ? "Word archived successfully." : "Word activated successfully."
+      );
+      await loadWords();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to update word status."
+      );
     }
-
-    setSuccessMessage(
-      currentActive ? "Word archived successfully." : "Word activated successfully."
-    );
-    await loadWords();
   }
 
   const filteredWords = useMemo(() => {
@@ -249,11 +295,30 @@ export default function AdminWordsPage() {
     );
   }
 
+  if (errorMessage && !isAdmin) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <section className="mx-auto max-w-3xl px-6 py-10">
+          <div className="rounded-2xl border bg-white p-8 shadow-sm text-center">
+            <h1 className="text-3xl font-bold text-slate-900">Something went wrong</h1>
+            <p className="mt-3 text-slate-600">{errorMessage}</p>
+            <Link
+              href="/dashboard"
+              className="mt-6 inline-block rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
+            >
+              Back to dashboard
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   if (!isAdmin) {
     return (
       <main className="min-h-screen bg-slate-50">
         <section className="mx-auto max-w-3xl px-6 py-10">
-          <div className="rounded-2xl border bg-white p-8 text-center shadow-sm">
+          <div className="rounded-2xl border bg-white p-8 shadow-sm text-center">
             <h1 className="text-3xl font-bold text-slate-900">Access denied</h1>
             <p className="mt-3 text-slate-600">
               Only admin users can manage vocabulary words.

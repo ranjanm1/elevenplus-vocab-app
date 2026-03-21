@@ -16,16 +16,30 @@ export default function LoginPage() {
 
   useEffect(() => {
     async function checkSession() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      setCheckingSession(true);
+      setErrorMessage("");
 
-      if (session?.user) {
-        router.push("/dashboard");
-        return;
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        if (session?.user) {
+          router.push("/dashboard");
+          return;
+        }
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to load login page."
+        );
+      } finally {
+        setCheckingSession(false);
       }
-
-      setCheckingSession(false);
     }
 
     checkSession();
@@ -35,18 +49,24 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMessage("");
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
-      setErrorMessage(error.message);
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      router.push("/dashboard");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Login failed."
+      );
+    } finally {
       setLoading(false);
-      return;
     }
-
-    router.push("/dashboard");
   }
 
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
