@@ -20,6 +20,12 @@ export default defineConfig({
     url: "http://127.0.0.1:3000",
     reuseExistingServer: true,
     timeout: 120_000,
+    env: {
+      NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+      E2E_ADMIN_EMAIL: process.env.E2E_ADMIN_EMAIL || "",
+      E2E_ADMIN_PASSWORD: process.env.E2E_ADMIN_PASSWORD || "",
+    },
   },
   projects: [
     {
