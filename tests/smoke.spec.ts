@@ -94,3 +94,50 @@ test("logout works", async ({ page }) => {
     page.getByRole("heading", { name: /welcome back/i })
   ).toBeVisible();
 });
+
+test("logged in user can complete a full quiz", async ({ page }) => {
+  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Missing E2E admin credentials");
+
+  await loginAsAdmin(page);
+  await page.goto("/quiz");
+
+  await expect(page.locator("text=Checking access...")).toHaveCount(0);
+  await expect(page.locator("text=Loading quiz...")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: /vocabulary quiz/i })
+  ).toBeVisible();
+
+  for (let i = 0; i < 10; i += 1) {
+    const submitButton = page.getByRole("button", { name: /submit answer/i });
+
+    await expect(submitButton).toBeVisible();
+
+    const optionButtons = page.locator("main button").filter({
+      hasNotText: /submit answer|next question|finish quiz/i,
+    });
+
+    const optionCount = await optionButtons.count();
+    expect(optionCount).toBeGreaterThan(0);
+
+    await optionButtons.first().click();
+
+    await expect(submitButton).toBeEnabled();
+    await submitButton.click();
+
+    if (i < 9) {
+      const nextButton = page.getByRole("button", { name: /next question/i });
+      await expect(nextButton).toBeVisible();
+      await nextButton.click();
+    } else {
+      const finishButton = page.getByRole("button", { name: /finish quiz/i });
+      await expect(finishButton).toBeVisible();
+      await finishButton.click();
+    }
+  }
+
+  await expect(
+    page.getByRole("heading", { name: /quiz complete/i })
+  ).toBeVisible();
+
+  await expect(page.locator("text=You scored")).toBeVisible();
+});
