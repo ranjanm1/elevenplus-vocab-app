@@ -1,12 +1,10 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, Page } from "@playwright/test";
 
 const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || "";
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || "";
 
-async function loginAsAdmin(page: any) {
+async function loginAsAdmin(page: Page) {
   await page.goto("/login");
-
-  // Ensure not stuck on loading
   await expect(page.locator("text=Loading...")).toHaveCount(0);
 
   await page.getByLabel("Email address").fill(ADMIN_EMAIL);
@@ -14,46 +12,85 @@ async function loginAsAdmin(page: any) {
   await page.getByRole("button", { name: /sign in/i }).click();
 
   await page.waitForURL("**/dashboard");
+  await expect(page.locator("text=Loading dashboard...")).toHaveCount(0);
 }
 
 test("home page loads", async ({ page }) => {
   await page.goto("/");
+  await expect(page.locator("body")).toContainText("11+ Succeed");
+});
+
+test("words page loads with pagination", async ({ page }) => {
+  await page.goto("/words");
+  await expect(
+    page.getByRole("heading", { name: /vocabulary list/i })
+  ).toBeVisible();
+
+  await expect(page.locator("text=Loading vocabulary words...")).toHaveCount(0);
+  await expect(page.getByText(/^Page 1$/).first()).toBeVisible();
+});
+
+test("login page loads and does not hang", async ({ page }) => {
+  await page.goto("/login");
+  await expect(
+    page.getByRole("heading", { name: /welcome back/i })
+  ).toBeVisible();
   await expect(page.locator("text=Loading...")).toHaveCount(0);
 });
 
-test("words page loads", async ({ page }) => {
-  await page.goto("/words");
-  await expect(page.locator("text=Loading")).toHaveCount(0);
-});
-
-test("login page loads", async ({ page }) => {
-  await page.goto("/login");
-  await expect(page.getByText("Welcome back")).toBeVisible();
-});
-
-test("admin login works", async ({ page }) => {
-  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "No admin credentials");
+test("admin can log in and dashboard loads", async ({ page }) => {
+  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Missing E2E admin credentials");
 
   await loginAsAdmin(page);
-  await expect(page).toHaveURL(/dashboard/);
+  await expect(page.locator("text=Welcome")).toBeVisible();
 });
 
-test("admin words page loads", async ({ page }) => {
-  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "No admin credentials");
+test("quiz page loads for logged in user", async ({ page }) => {
+  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Missing E2E admin credentials");
+
+  await loginAsAdmin(page);
+  await page.goto("/quiz");
+
+  await expect(page.locator("text=Checking access...")).toHaveCount(0);
+  await expect(page.locator("text=Loading quiz...")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: /vocabulary quiz/i })
+  ).toBeVisible();
+});
+
+test("admin words page loads with pagination", async ({ page }) => {
+  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Missing E2E admin credentials");
 
   await loginAsAdmin(page);
   await page.goto("/admin/words");
 
-  await expect(page.locator("text=Manage Words")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /manage words/i })
+  ).toBeVisible();
+  await expect(page.locator("text=Loading words manager...")).toHaveCount(0);
+  await expect(page.getByText(/^Page 1$/).first()).toBeVisible();
+});
+
+test("admin upload page loads", async ({ page }) => {
+  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Missing E2E admin credentials");
+
+  await loginAsAdmin(page);
+  await page.goto("/admin/upload");
+
+  await expect(
+    page.getByRole("heading", { name: /upload vocabulary/i })
+  ).toBeVisible();
+  await expect(page.locator("text=Loading upload page...")).toHaveCount(0);
 });
 
 test("logout works", async ({ page }) => {
-  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "No admin credentials");
+  test.skip(!ADMIN_EMAIL || !ADMIN_PASSWORD, "Missing E2E admin credentials");
 
   await loginAsAdmin(page);
-
   await page.getByRole("button", { name: /logout/i }).click();
-  await page.waitForURL("**/login");
 
-  await expect(page.getByText("Welcome back")).toBeVisible();
+  await page.waitForURL("**/login");
+  await expect(
+    page.getByRole("heading", { name: /welcome back/i })
+  ).toBeVisible();
 });
