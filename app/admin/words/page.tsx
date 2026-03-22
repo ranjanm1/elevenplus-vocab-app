@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -43,6 +43,8 @@ type EditForm = {
   quiz_option_3: string;
 };
 
+const PAGE_SIZE = 50;
+
 function makeSlug(word: string) {
   return word.trim().toLowerCase().replace(/\s+/g, "-");
 }
@@ -56,6 +58,10 @@ export default function AdminWordsPage() {
 
   const [words, setWords] = useState<VocabularyWord[]>([]);
   const [search, setSearch] = useState("");
+  const [difficulty, setDifficulty] = useState("all");
+  const [page, setPage] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(false);
+
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -97,19 +103,11 @@ export default function AdminWordsPage() {
           throw new Error(roleError.message);
         }
 
-        setIsAdmin(roleRow?.role === "admin");
+        const admin = roleRow?.role === "admin";
+        setIsAdmin(admin);
 
-        if (roleRow?.role === "admin") {
-          const { data, error } = await supabase
-            .from("vocabulary_words")
-            .select("*")
-            .order("word", { ascending: true });
-
-          if (error) {
-            throw new Error(error.message);
-          }
-
-          setWords((data as VocabularyWord[]) || []);
+        if (admin) {
+          await loadWords(1, search, difficulty);
         }
       } catch (error) {
         setIsAdmin(false);
@@ -122,24 +120,58 @@ export default function AdminWordsPage() {
     }
 
     initialisePage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  async function loadWords() {
+  useEffect(() => {
+    if (isAdmin) {
+      loadWords(page, search, difficulty);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, search, difficulty, isAdmin]);
+
+  async function loadWords(
+    targetPage: number,
+    searchText: string,
+    difficultyFilter: string
+  ) {
+    setLoading(true);
+    setErrorMessage("");
+
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from("vocabulary_words")
-        .select("*")
+        .select(
+          "id, word, slug, definition, difficulty, example_sentence, synonyms, antonyms, topic, premium_only, active, quiz_option_1, quiz_option_2, quiz_option_3"
+        )
         .order("word", { ascending: true });
+
+      if (difficultyFilter !== "all") {
+        query = query.eq("difficulty", difficultyFilter);
+      }
+
+      if (searchText.trim()) {
+        query = query.ilike("word", `%${searchText.trim()}%`);
+      }
+
+      const from = (targetPage - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE;
+
+      const { data, error } = await query.range(from, to);
 
       if (error) {
         throw new Error(error.message);
       }
 
-      setWords((data as VocabularyWord[]) || []);
+      const rows = (data as VocabularyWord[]) || [];
+      setHasNextPage(rows.length > PAGE_SIZE);
+      setWords(rows.slice(0, PAGE_SIZE));
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to reload words."
       );
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -204,7 +236,7 @@ export default function AdminWordsPage() {
 
       setSuccessMessage(`"${editForm.word}" updated successfully.`);
       setEditForm(null);
-      await loadWords();
+      await loadWords(page, search, difficulty);
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to save changes."
@@ -238,7 +270,7 @@ export default function AdminWordsPage() {
       if (editForm?.id === wordId) {
         setEditForm(null);
       }
-      await loadWords();
+      await loadWords(page, search, difficulty);
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to delete word."
@@ -263,7 +295,7 @@ export default function AdminWordsPage() {
       setSuccessMessage(
         currentActive ? "Word archived successfully." : "Word activated successfully."
       );
-      await loadWords();
+      await loadWords(page, search, difficulty);
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to update word status."
@@ -271,21 +303,7 @@ export default function AdminWordsPage() {
     }
   }
 
-  const filteredWords = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return words;
-
-    return words.filter((w) => {
-      return (
-        w.word.toLowerCase().includes(q) ||
-        (w.definition || "").toLowerCase().includes(q) ||
-        (w.topic || "").toLowerCase().includes(q) ||
-        (w.difficulty || "").toLowerCase().includes(q)
-      );
-    });
-  }, [words, search]);
-
-  if (loading) {
+  if (loading && !words.length && !errorMessage) {
     return (
       <main className="min-h-screen bg-slate-50">
         <section className="mx-auto max-w-6xl px-6 py-10">
@@ -341,21 +359,58 @@ export default function AdminWordsPage() {
         <h1 className="mb-6 text-3xl font-bold text-slate-900">Manage Words</h1>
 
         <div className="mb-6 rounded-xl border bg-white p-6 shadow-sm">
-          <label
-            htmlFor="word-search"
-            className="mb-2 block text-sm font-medium text-slate-700"
-          >
-            Search word
-          </label>
-          <input
-            id="word-search"
-            type="text"
-            placeholder="Search word..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
-          />
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label
+                htmlFor="word-search"
+                className="mb-2 block text-sm font-medium text-slate-700"
+              >
+                Search word
+              </label>
+              <input
+                id="word-search"
+                type="text"
+                placeholder="Search word..."
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="difficulty"
+                className="mb-2 block text-sm font-medium text-slate-700"
+              >
+                Difficulty
+              </label>
+              <select
+                id="difficulty"
+                value={difficulty}
+                onChange={(e) => {
+                  setDifficulty(e.target.value);
+                  setPage(1);
+                }}
+                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
+              >
+                <option value="all">All</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+                <option value="difficult">Difficult</option>
+              </select>
+            </div>
+          </div>
+
+          <p className="mt-4 text-sm text-slate-600">Page {page}</p>
         </div>
+
+        {loading && (
+          <p className="mb-4 text-slate-600">Refreshing words...</p>
+        )}
 
         {errorMessage && (
           <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -383,7 +438,7 @@ export default function AdminWordsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredWords.map((w) => (
+                {words.map((w) => (
                   <tr key={w.id} className="border-t">
                     <td className="px-4 py-4 text-slate-900">{w.word}</td>
                     <td className="px-4 py-4 text-slate-700">
@@ -442,7 +497,7 @@ export default function AdminWordsPage() {
                   </tr>
                 ))}
 
-                {filteredWords.length === 0 && (
+                {!loading && words.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                       No words found.
@@ -452,6 +507,28 @@ export default function AdminWordsPage() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div className="mt-8 flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            disabled={page === 1}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Previous
+          </button>
+
+          <span className="text-sm text-slate-600">Page {page}</span>
+
+          <button
+            type="button"
+            onClick={() => setPage((prev) => prev + 1)}
+            disabled={!hasNextPage}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Next
+          </button>
         </div>
 
         {editForm && (
