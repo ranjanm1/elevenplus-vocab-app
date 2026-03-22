@@ -2,34 +2,25 @@ import Link from "next/link";
 import { supabase } from "../lib/supabase";
 
 export default async function Home() {
-  const today = new Date().toISOString().split("T")[0];
-
-  const { data: dailyWordRow } = await supabase
-    .from("word_of_the_day")
-    .select(`
-      vocabulary_word_id,
-      vocabulary_words (
-        id,
-        word,
-        slug,
-        definition,
-        difficulty,
-        example_sentence,
-        topic,
-        premium_only
-      )
-    `)
-    .eq("display_date", today)
-    .single();
-
-  const dailyWord = Array.isArray(dailyWordRow?.vocabulary_words)
-    ? dailyWordRow.vocabulary_words[0]
-    : dailyWordRow?.vocabulary_words;
-
-  const { data: words, error } = await supabase
+  const { data: dailyWord, error: dailyWordError } = await supabase
     .from("vocabulary_words")
-    .select("*")
-    .order("word", { ascending: true });
+    .select(
+      "id, word, slug, definition, difficulty, example_sentence, topic, premium_only"
+    )
+    .eq("word_of_the_day", true)
+    .eq("active", true)
+    .maybeSingle();
+
+  const { data: words, error: wordsError } = await supabase
+    .from("vocabulary_words")
+    .select(
+      "id, word, slug, definition, difficulty, example_sentence, topic, premium_only"
+    )
+    .eq("active", true)
+    .order("word", { ascending: true })
+    .limit(20);
+
+  const errorMessage = dailyWordError?.message || wordsError?.message;
 
   return (
     <main className="min-h-screen bg-slate-50">
@@ -45,6 +36,7 @@ export default async function Home() {
                 <h2 className="text-3xl font-bold text-green-950">
                   {dailyWord.word}
                 </h2>
+
                 <p className="mt-3 text-base text-slate-700">
                   {dailyWord.definition}
                 </p>
@@ -61,11 +53,13 @@ export default async function Home() {
                       Difficulty: {dailyWord.difficulty}
                     </span>
                   )}
+
                   {dailyWord.topic && (
                     <span className="rounded bg-white px-2 py-1">
                       Topic: {dailyWord.topic}
                     </span>
                   )}
+
                   {dailyWord.premium_only && (
                     <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">
                       Premium
@@ -96,17 +90,26 @@ export default async function Home() {
           </p>
         </div>
 
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-slate-900">
-            Vocabulary Words
-          </h3>
-          <p className="text-sm text-slate-600">
-            These are currently being loaded from your Supabase database.
-          </p>
+        <div className="mb-6 flex items-end justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">
+              Vocabulary Preview
+            </h3>
+            <p className="text-sm text-slate-600">
+              Showing a sample of words from your vocabulary bank.
+            </p>
+          </div>
+
+          <Link
+            href="/words"
+            className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-green-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50"
+          >
+            View all words
+          </Link>
         </div>
 
-        {error && (
-          <p className="mb-4 text-red-600">Error: {error.message}</p>
+        {errorMessage && (
+          <p className="mb-4 text-red-600">Error: {errorMessage}</p>
         )}
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -142,6 +145,7 @@ export default async function Home() {
                     Difficulty: {word.difficulty}
                   </span>
                 )}
+
                 {word.topic && (
                   <span className="rounded bg-slate-100 px-2 py-1">
                     Topic: {word.topic}
