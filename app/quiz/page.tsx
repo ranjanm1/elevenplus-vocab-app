@@ -1,20 +1,24 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type QuizWord = {
   id: string;
   word: string;
   definition: string;
-  quiz_option_1: string | null;
-  quiz_option_2: string | null;
-  quiz_option_3: string | null;
 };
 
-const TOTAL_QUESTIONS = 10;
+type QuizQuestion = {
+  id: string;
+  word: string;
+  correctAnswer: string;
+  options: string[];
+};
+
+const QUIZ_SIZE = 10;
+const WORD_POOL_SIZE = 80;
 
 function shuffleArray<T>(items: T[]): T[] {
   const array = [...items];
@@ -26,202 +30,277 @@ function shuffleArray<T>(items: T[]): T[] {
 }
 
 export default function QuizPage() {
-  const router = useRouter();
+  const [checkingAccess, setCheckingAccess] = useState(true);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [loadingQuiz, setLoadingQuiz] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [questions, setQuestions] = useState<QuizQuestion[]>([]);
 
-  const [word, setWord] = useState<QuizWord | null>(null);
-  const [options, setOptions] = useState<string[]>([]);
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
-  const [hasScoredCurrentQuestion, setHasScoredCurrentQuestion] = useState(false);
-
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [selectedAnswer, setSelectedAnswer] = useState("");
+  const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState(0);
-  const [questionNumber, setQuestionNumber] = useState(1);
-  const [usedWordIds, setUsedWordIds] = useState<string[]>([]);
-  const [quizComplete, setQuizComplete] = useState(false);
-  const [resultSaved, setResultSaved] = useState(false);
-
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  async function loadQuestion(nextUsedWordIds?: string[]) {
-    setLoading(true);
-    setError("");
-    setSelectedAnswer(null);
-    setHasScoredCurrentQuestion(false);
-
-    const { data, error } = await supabase
-      .from("vocabulary_words")
-      .select("id, word, definition, quiz_option_1, quiz_option_2, quiz_option_3")
-      .eq("active", true);
-
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-      return;
-    }
-
-    if (!data || data.length === 0) {
-      setError("No quiz words available.");
-      setLoading(false);
-      return;
-    }
-
-    const validWords = data.filter(
-      (item) =>
-        item.definition &&
-        item.quiz_option_1 &&
-        item.quiz_option_2 &&
-        item.quiz_option_3
-    ) as QuizWord[];
-
-    if (validWords.length === 0) {
-      setError("No quiz-ready words found. Please add quiz options.");
-      setLoading(false);
-      return;
-    }
-
-    const alreadyUsed = nextUsedWordIds ?? usedWordIds;
-
-    let availableWords = validWords.filter(
-      (item) => !alreadyUsed.includes(item.id)
-    );
-
-    let refreshedUsedIds = alreadyUsed;
-
-    if (availableWords.length === 0) {
-      availableWords = validWords;
-      refreshedUsedIds = [];
-      setUsedWordIds([]);
-    }
-
-    const randomWord =
-      availableWords[Math.floor(Math.random() * availableWords.length)];
-
-    const shuffledOptions = shuffleArray([
-      randomWord.definition,
-      randomWord.quiz_option_1!,
-      randomWord.quiz_option_2!,
-      randomWord.quiz_option_3!,
-    ]);
-
-    setWord(randomWord);
-    setOptions(shuffledOptions);
-    setLoading(false);
-
-    setUsedWordIds((prev) => {
-      const baseIds = nextUsedWordIds ?? refreshedUsedIds ?? prev;
-      return [...baseIds, randomWord.id];
-    });
-  }
+  const [quizFinished, setQuizFinished] = useState(false);
+  const [savingResult, setSavingResult] = useState(false);
 
   useEffect(() => {
-    async function checkSession() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+    async function checkAccess() {
+      setCheckingAccess(true);
+      setErrorMessage("");
 
-      if (!session?.user) {
-        setIsAuthenticated(false);
-        setLoading(false);
-        return;
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        if (!session?.user) {
+          setIsLoggedIn(false);
+          return;
+        }
+
+        setIsLoggedIn(true);
+        await loadQuizQuestions();
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to check access."
+        );
+      } finally {
+        setCheckingAccess(false);
       }
-
-      setIsAuthenticated(true);
-      setCurrentUserId(session.user.id);
-      await loadQuestion([]);
     }
 
-    checkSession();
+    checkAccess();
   }, []);
 
-  const answerState = useMemo(() => {
-    if (!selectedAnswer || !word) return null;
-    return selectedAnswer === word.definition ? "correct" : "incorrect";
-  }, [selectedAnswer, word]);
+  async function loadQuizQuestions() {
+    setLoadingQuiz(true);
+    setErrorMessage("");
 
-  function handleAnswerSelect(option: string) {
-    if (!word || selectedAnswer || quizComplete) return;
+    try {
+      const { data, error } = await supabase
+        .from("vocabulary_words")
+        .select("id, word, definition")
+        .eq("active", true)
+        .eq("premium_only", false)
+        .limit(WORD_POOL_SIZE);
 
-    setSelectedAnswer(option);
+      if (error) {
+        throw new Error(error.message);
+      }
 
-    if (!hasScoredCurrentQuestion && option === word.definition) {
-      setScore((prev) => prev + 1);
-      setHasScoredCurrentQuestion(true);
-    } else if (!hasScoredCurrentQuestion) {
-      setHasScoredCurrentQuestion(true);
+      const pool = shuffleArray((data as QuizWord[]) || []).filter(
+        (item) => item.word && item.definition
+      );
+
+      if (pool.length < QUIZ_SIZE) {
+        throw new Error("Not enough words available to generate a quiz.");
+      }
+
+      const selectedWords = pool.slice(0, QUIZ_SIZE);
+
+      const generatedQuestions = selectedWords.map((item) => {
+        const distractors = shuffleArray(
+          pool
+            .filter((candidate) => candidate.id !== item.id)
+            .map((candidate) => candidate.definition)
+            .filter(
+              (definition, index, arr) =>
+                definition &&
+                definition !== item.definition &&
+                arr.indexOf(definition) === index
+            )
+        ).slice(0, 3);
+
+        return {
+          id: item.id,
+          word: item.word,
+          correctAnswer: item.definition,
+          options: shuffleArray([item.definition, ...distractors]),
+        };
+      });
+
+      setQuestions(generatedQuestions);
+      setCurrentQuestionIndex(0);
+      setSelectedAnswer("");
+      setSubmitted(false);
+      setScore(0);
+      setQuizFinished(false);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to load quiz."
+      );
+    } finally {
+      setLoadingQuiz(false);
     }
   }
 
   async function saveQuizResult(finalScore: number) {
-    if (!currentUserId || resultSaved) return;
+    setSavingResult(true);
 
-    const percentage = Math.round((finalScore / TOTAL_QUESTIONS) * 100);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-    const { error } = await supabase.from("quiz_results").insert({
-      user_id: currentUserId,
-      score: finalScore,
-      total_questions: TOTAL_QUESTIONS,
-      percentage,
-    });
+      if (!session?.user) return;
 
-    if (!error) {
-      setResultSaved(true);
+      const percentage = Math.round((finalScore / questions.length) * 100);
+
+      const { error } = await supabase.from("quiz_results").insert({
+        user_id: session.user.id,
+        score: finalScore,
+        total_questions: questions.length,
+        percentage,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to save quiz result."
+      );
+    } finally {
+      setSavingResult(false);
     }
+  }
+
+  function handleSubmitAnswer() {
+    if (!selectedAnswer) return;
+    setSubmitted(true);
   }
 
   async function handleNextQuestion() {
-    if (questionNumber >= TOTAL_QUESTIONS) {
-      setQuizComplete(true);
-      await saveQuizResult(score);
+    const currentQuestion = questions[currentQuestionIndex];
+    const isCorrect = selectedAnswer === currentQuestion.correctAnswer;
+    const newScore = isCorrect ? score + 1 : score;
+
+    if (isCorrect) {
+      setScore(newScore);
+    }
+
+    if (currentQuestionIndex === questions.length - 1) {
+      setQuizFinished(true);
+      await saveQuizResult(newScore);
       return;
     }
 
-    setQuestionNumber((prev) => prev + 1);
-    await loadQuestion();
+    setCurrentQuestionIndex((prev) => prev + 1);
+    setSelectedAnswer("");
+    setSubmitted(false);
   }
 
   async function handleRestartQuiz() {
-    setScore(0);
-    setQuestionNumber(1);
-    setUsedWordIds([]);
-    setQuizComplete(false);
-    setSelectedAnswer(null);
-    setHasScoredCurrentQuestion(false);
-    setResultSaved(false);
-    await loadQuestion([]);
+    await loadQuizQuestions();
   }
 
-  const percentage = Math.round((score / TOTAL_QUESTIONS) * 100);
+  if (checkingAccess) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <section className="mx-auto max-w-4xl px-6 py-10">
+          <p className="text-slate-600">Checking access...</p>
+        </section>
+      </main>
+    );
+  }
 
-  if (isAuthenticated === false) {
+  if (!isLoggedIn) {
     return (
       <main className="min-h-screen bg-slate-50">
         <section className="mx-auto max-w-3xl px-6 py-10">
-          <div className="rounded-2xl border bg-white p-8 shadow-sm text-center">
+          <div className="rounded-2xl border bg-white p-8 text-center shadow-sm">
             <h1 className="text-3xl font-bold text-slate-900">
               Quiz is for registered users
             </h1>
             <p className="mt-3 text-slate-600">
-              Please sign in to access quizzes, save your results, and track progress.
+              Please log in to access the vocabulary quiz and save progress.
+            </p>
+            <Link
+              href="/login"
+              className="mt-6 inline-block rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
+            >
+              Go to login
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (loadingQuiz) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <section className="mx-auto max-w-4xl px-6 py-10">
+          <p className="text-slate-600">Loading quiz...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (errorMessage && questions.length === 0) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <section className="mx-auto max-w-3xl px-6 py-10">
+          <div className="rounded-2xl border bg-white p-8 shadow-sm">
+            <h1 className="text-2xl font-bold text-slate-900">Quiz unavailable</h1>
+            <p className="mt-3 text-slate-600">{errorMessage}</p>
+            <button
+              type="button"
+              onClick={handleRestartQuiz}
+              className="mt-6 rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
+            >
+              Try again
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (quizFinished) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <section className="mx-auto max-w-3xl px-6 py-10">
+          <div className="rounded-2xl border bg-white p-8 text-center shadow-sm">
+            <h1 className="text-3xl font-bold text-slate-900">Quiz complete</h1>
+            <p className="mt-4 text-lg text-slate-700">
+              You scored {score} out of {questions.length}
+            </p>
+            <p className="mt-2 text-slate-600">
+              Accuracy: {Math.round((score / questions.length) * 100)}%
             </p>
 
-            <div className="mt-8 flex items-center justify-center gap-3">
-              <Link
-                href="/login"
-                className="rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
-              >
-                Go to login
-              </Link>
+            {savingResult && (
+              <p className="mt-4 text-sm text-slate-500">Saving result...</p>
+            )}
 
+            {errorMessage && (
+              <p className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+                {errorMessage}
+              </p>
+            )}
+
+            <div className="mt-6 flex justify-center gap-3">
               <button
                 type="button"
-                onClick={() => router.push("/signup")}
+                onClick={handleRestartQuiz}
+                className="rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
+              >
+                Restart quiz
+              </button>
+
+              <Link
+                href="/dashboard"
                 className="rounded-lg border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
-                Create account
-              </button>
+                Back to dashboard
+              </Link>
             </div>
           </div>
         </section>
@@ -229,140 +308,93 @@ export default function QuizPage() {
     );
   }
 
+  const currentQuestion = questions[currentQuestionIndex];
+  const isCorrect = selectedAnswer === currentQuestion.correctAnswer;
+
   return (
     <main className="min-h-screen bg-slate-50">
-      <section className="mx-auto max-w-3xl px-6 py-10">
-        <div className="mb-6 rounded-2xl border border-green-200 bg-green-50 p-6 shadow-sm">
-          <h1 className="text-3xl font-bold text-green-950">Vocabulary Quiz</h1>
-          <p className="mt-2 text-slate-700">
-            Test your understanding of key 11+ vocabulary words.
-          </p>
-        </div>
-
+      <section className="mx-auto max-w-4xl px-6 py-10">
         <div className="rounded-2xl border bg-white p-8 shadow-sm">
-          {loading && <p className="text-slate-600">Loading question...</p>}
+          <div className="mb-6 flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-slate-900">Vocabulary Quiz</h1>
+            <p className="text-sm text-slate-600">
+              Question {currentQuestionIndex + 1} of {questions.length}
+            </p>
+          </div>
 
-          {error && <p className="text-red-600">Error: {error}</p>}
+          <p className="mb-6 text-lg text-slate-700">
+            What is the meaning of{" "}
+            <span className="font-bold text-slate-900">{currentQuestion.word}</span>?
+          </p>
 
-          {!loading && !error && quizComplete && (
-            <div className="text-center">
-              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-green-100 text-2xl font-bold text-green-800">
-                {score}/{TOTAL_QUESTIONS}
-              </div>
+          <div className="space-y-3">
+            {currentQuestion.options.map((option) => {
+              const isSelected = selectedAnswer === option;
+              const isRightAnswer = option === currentQuestion.correctAnswer;
 
-              <h2 className="text-3xl font-bold text-slate-900">
-                Quiz complete
-              </h2>
+              let className =
+                "w-full rounded-lg border px-4 py-3 text-left text-sm transition ";
 
-              <p className="mt-3 text-slate-600">
-                You scored <span className="font-semibold">{score}</span> out of{" "}
-                <span className="font-semibold">{TOTAL_QUESTIONS}</span>.
-              </p>
+              if (submitted) {
+                if (isRightAnswer) {
+                  className += "border-green-500 bg-green-50 text-green-800";
+                } else if (isSelected) {
+                  className += "border-red-500 bg-red-50 text-red-800";
+                } else {
+                  className += "border-slate-300 bg-white text-slate-700";
+                }
+              } else if (isSelected) {
+                className += "border-green-600 bg-green-50 text-slate-900";
+              } else {
+                className +=
+                  "border-slate-300 bg-white text-slate-700 hover:bg-slate-50";
+              }
 
-              <p className="mt-2 text-sm text-slate-500">
-                Accuracy: {percentage}%
-              </p>
-
-              {resultSaved && (
-                <p className="mt-3 text-sm font-medium text-green-700">
-                  Your quiz result has been saved.
-                </p>
-              )}
-
-              <div className="mt-8">
+              return (
                 <button
+                  key={option}
                   type="button"
-                  onClick={handleRestartQuiz}
-                  className="rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
+                  disabled={submitted}
+                  onClick={() => setSelectedAnswer(option)}
+                  className={className}
                 >
-                  Restart quiz
+                  {option}
                 </button>
-              </div>
+              );
+            })}
+          </div>
+
+          {!submitted ? (
+            <button
+              type="button"
+              onClick={handleSubmitAnswer}
+              disabled={!selectedAnswer}
+              className="mt-6 rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Submit answer
+            </button>
+          ) : (
+            <div className="mt-6">
+              <p
+                className={`mb-4 text-sm font-medium ${
+                  isCorrect ? "text-green-700" : "text-red-700"
+                }`}
+              >
+                {isCorrect
+                  ? "Correct!"
+                  : `Incorrect. Correct answer: ${currentQuestion.correctAnswer}`}
+              </p>
+
+              <button
+                type="button"
+                onClick={handleNextQuestion}
+                className="rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
+              >
+                {currentQuestionIndex === questions.length - 1
+                  ? "Finish quiz"
+                  : "Next question"}
+              </button>
             </div>
-          )}
-
-          {!loading && !error && !quizComplete && word && (
-            <>
-              <div className="mb-4 flex items-center justify-between">
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
-                  Question {questionNumber} of {TOTAL_QUESTIONS}
-                </span>
-                <span className="text-sm font-medium text-slate-600">
-                  Score: {score}
-                </span>
-              </div>
-
-              <h2 className="text-2xl font-bold text-slate-900">
-                What is the meaning of the word &quot;{word.word}&quot;?
-              </h2>
-
-              <div className="mt-6 grid gap-3">
-                {options.map((option) => {
-                  const isSelected = selectedAnswer === option;
-                  const isCorrect = option === word.definition;
-
-                  let buttonClass =
-                    "border-slate-200 bg-white text-slate-800 hover:border-green-300 hover:bg-green-50";
-
-                  if (selectedAnswer) {
-                    if (isCorrect) {
-                      buttonClass =
-                        "border-green-600 bg-green-50 text-green-900";
-                    } else if (isSelected) {
-                      buttonClass = "border-red-500 bg-red-50 text-red-700";
-                    }
-                  } else if (isSelected) {
-                    buttonClass =
-                      "border-green-600 bg-green-50 text-green-900";
-                  }
-
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => handleAnswerSelect(option)}
-                      disabled={!!selectedAnswer}
-                      className={`rounded-xl border px-4 py-4 text-left text-sm font-medium transition ${buttonClass}`}
-                    >
-                      {option}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="mt-8 flex items-center justify-between gap-4">
-                <div>
-                  {!selectedAnswer && (
-                    <p className="text-sm text-slate-500">
-                      Select the best meaning for the word.
-                    </p>
-                  )}
-
-                  {answerState === "correct" && (
-                    <p className="text-sm font-medium text-green-700">
-                      Correct — well done!
-                    </p>
-                  )}
-
-                  {answerState === "incorrect" && (
-                    <p className="text-sm font-medium text-red-700">
-                      Not quite. The correct answer is: {word.definition}
-                    </p>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleNextQuestion}
-                  disabled={!selectedAnswer}
-                  className="rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {questionNumber === TOTAL_QUESTIONS
-                    ? "Finish quiz"
-                    : "Next question"}
-                </button>
-              </div>
-            </>
           )}
         </div>
       </section>
