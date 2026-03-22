@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/components/AuthProvider";
 
 type QuizWord = {
   id: string;
@@ -30,8 +31,7 @@ function shuffleArray<T>(items: T[]): T[] {
 }
 
 export default function QuizPage() {
-  const [checkingAccess, setCheckingAccess] = useState(true);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const { user, authLoading } = useAuth();
 
   const [loadingQuiz, setLoadingQuiz] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -45,38 +45,10 @@ export default function QuizPage() {
   const [savingResult, setSavingResult] = useState(false);
 
   useEffect(() => {
-    async function checkAccess() {
-      setCheckingAccess(true);
-      setErrorMessage("");
-
-      try {
-        const {
-          data: { session },
-          error,
-        } = await supabase.auth.getSession();
-
-        if (error) {
-          throw new Error(error.message);
-        }
-
-        if (!session?.user) {
-          setIsLoggedIn(false);
-          return;
-        }
-
-        setIsLoggedIn(true);
-        await loadQuizQuestions();
-      } catch (error) {
-        setErrorMessage(
-          error instanceof Error ? error.message : "Failed to check access."
-        );
-      } finally {
-        setCheckingAccess(false);
-      }
+    if (user) {
+      loadQuizQuestions();
     }
-
-    checkAccess();
-  }, []);
+  }, [user]);
 
   async function loadQuizQuestions() {
     setLoadingQuiz(true);
@@ -111,7 +83,7 @@ export default function QuizPage() {
             .map((candidate) => candidate.definition)
             .filter(
               (definition, index, arr) =>
-                definition &&
+                Boolean(definition) &&
                 definition !== item.definition &&
                 arr.indexOf(definition) === index
             )
@@ -135,25 +107,22 @@ export default function QuizPage() {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to load quiz."
       );
+      setQuestions([]);
     } finally {
       setLoadingQuiz(false);
     }
   }
 
   async function saveQuizResult(finalScore: number) {
+    if (!user) return;
+
     setSavingResult(true);
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.user) return;
-
       const percentage = Math.round((finalScore / questions.length) * 100);
 
       const { error } = await supabase.from("quiz_results").insert({
-        user_id: session.user.id,
+        user_id: user.id,
         score: finalScore,
         total_questions: questions.length,
         percentage,
@@ -178,6 +147,8 @@ export default function QuizPage() {
 
   async function handleNextQuestion() {
     const currentQuestion = questions[currentQuestionIndex];
+    if (!currentQuestion) return;
+
     const isCorrect = selectedAnswer === currentQuestion.correctAnswer;
     const newScore = isCorrect ? score + 1 : score;
 
@@ -200,7 +171,7 @@ export default function QuizPage() {
     await loadQuizQuestions();
   }
 
-  if (checkingAccess) {
+  if (authLoading) {
     return (
       <main className="min-h-screen bg-slate-50">
         <section className="mx-auto max-w-4xl px-6 py-10">
@@ -210,7 +181,7 @@ export default function QuizPage() {
     );
   }
 
-  if (!isLoggedIn) {
+  if (!user) {
     return (
       <main className="min-h-screen bg-slate-50">
         <section className="mx-auto max-w-3xl px-6 py-10">
@@ -273,7 +244,7 @@ export default function QuizPage() {
               You scored {score} out of {questions.length}
             </p>
             <p className="mt-2 text-slate-600">
-              Accuracy: {Math.round((score / questions.length) * 100)}%
+              Accuracy: {questions.length ? Math.round((score / questions.length) * 100) : 0}%
             </p>
 
             {savingResult && (
@@ -309,6 +280,29 @@ export default function QuizPage() {
   }
 
   const currentQuestion = questions[currentQuestionIndex];
+
+  if (!currentQuestion) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <section className="mx-auto max-w-3xl px-6 py-10">
+          <div className="rounded-2xl border bg-white p-8 shadow-sm">
+            <h1 className="text-2xl font-bold text-slate-900">Quiz unavailable</h1>
+            <p className="mt-3 text-slate-600">
+              No quiz question is available right now.
+            </p>
+            <button
+              type="button"
+              onClick={handleRestartQuiz}
+              className="mt-6 rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
+            >
+              Reload quiz
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   const isCorrect = selectedAnswer === currentQuestion.correctAnswer;
 
   return (

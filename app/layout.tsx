@@ -1,21 +1,25 @@
+import type { Metadata } from "next";
 import "./globals.css";
-import Header from "../components/Header";
+import Header from "@/components/Header";
+import { AuthProvider } from "@/components/AuthProvider";
 
-export const metadata = {
-  title: "11+ Vocab App",
-  description: "Vocabulary learning for 11+ exams",
+export const metadata: Metadata = {
+  title: "11+ Succeed",
+  description: "11+ vocabulary learning platform",
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <html lang="en">
-      <body className="bg-slate-50">
-        <Header />
-        {children}
+      <body>
+        <AuthProvider>
+          <Header />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );
