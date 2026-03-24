@@ -13,12 +13,18 @@ type QuizResult = {
   created_at: string;
 };
 
+type StudentRow = {
+  id: string;
+  full_name: string | null;
+};
+
 export default function DashboardPage() {
   const { user, authLoading } = useAuth();
 
   const [latestResult, setLatestResult] = useState<QuizResult | null>(null);
   const [quizCount, setQuizCount] = useState(0);
   const [bestScore, setBestScore] = useState<number | null>(null);
+  const [studentName, setStudentName] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -44,6 +50,20 @@ export default function DashboardPage() {
 
       if (error) {
         throw new Error(error.message);
+      }
+
+      const { data: studentData, error: studentError } = await supabase
+        .from("students")
+        .select("id, full_name")
+        .eq("parent_user_id", user.id)
+        .eq("is_primary", true)
+        .maybeSingle();
+
+      if (!studentError && studentData) {
+        setStudentName((studentData as StudentRow).full_name || "");
+      } else if (studentError) {
+        // Keep dashboard working even if students table is not set up yet.
+        setStudentName("");
       }
 
       const rows = (results as QuizResult[]) || [];
@@ -110,6 +130,11 @@ export default function DashboardPage() {
           <p className="mt-2 text-slate-700">
             Track vocabulary progress, review quiz performance, and continue learning.
           </p>
+          {studentName && (
+            <p className="mt-1 text-sm text-slate-600">
+              Student profile: {studentName}
+            </p>
+          )}
         </div>
 
         {loading && (

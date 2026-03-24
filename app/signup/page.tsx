@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 
 export default function SignupPage() {
   const [fullName, setFullName] = useState("");
+  const [studentName, setStudentName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -39,12 +40,16 @@ export default function SignupPage() {
     setErrorMessage("");
     setSuccessMessage("");
 
-    const { error } = await supabase.auth.signUp({
+    const {
+      data: signupData,
+      error,
+    } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
           full_name: fullName,
+          student_name: studentName,
         },
       },
     });
@@ -55,11 +60,43 @@ export default function SignupPage() {
       return;
     }
 
+    const newUserId = signupData.user?.id;
+    if (newUserId) {
+      const { error: profileError } = await supabase.from("profiles").upsert(
+        {
+          id: newUserId,
+          full_name: fullName.trim(),
+          email: email.trim().toLowerCase(),
+        },
+        { onConflict: "id" }
+      );
+
+      if (profileError) {
+        // Do not fail signup if profile write is blocked/missing.
+        console.error("Profile upsert failed:", profileError.message);
+      }
+
+      const { error: studentError } = await supabase.from("students").upsert(
+        {
+          parent_user_id: newUserId,
+          full_name: studentName.trim(),
+          is_primary: true,
+        },
+        { onConflict: "parent_user_id" }
+      );
+
+      if (studentError) {
+        // Do not fail signup if student write is blocked/missing.
+        console.error("Student upsert failed:", studentError.message);
+      }
+    }
+
     setSuccessMessage(
       "Account created. Please check your email to confirm your account."
     );
     setLoading(false);
     setFullName("");
+    setStudentName("");
     setEmail("");
     setPassword("");
   }
@@ -99,6 +136,24 @@ export default function SignupPage() {
                 placeholder="Your full name"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
+                required
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="studentName"
+                className="mb-2 block text-sm font-medium text-slate-700"
+              >
+                Student name
+              </label>
+              <input
+                id="studentName"
+                type="text"
+                placeholder="Student full name"
+                value={studentName}
+                onChange={(e) => setStudentName(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
                 required
               />

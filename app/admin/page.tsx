@@ -173,10 +173,10 @@ export default function AdminPage() {
             className="rounded-xl border bg-white p-6 shadow-sm transition hover:shadow-md"
           >
             <h2 className="text-lg font-semibold text-slate-900">
-              Quiz Results
+              Student Progress
             </h2>
             <p className="mt-2 text-sm text-slate-600">
-              Review learner performance and recent quiz activity.
+              Review learner performance, trends, and risk status.
             </p>
           </Link>
         </div>

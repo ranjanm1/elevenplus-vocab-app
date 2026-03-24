@@ -18,6 +18,11 @@ type QuizQuestion = {
   options: string[];
 };
 
+type StudentRow = {
+  id: string;
+  full_name: string | null;
+};
+
 const QUIZ_SIZE = 10;
 const WORD_POOL_SIZE = 80;
 
@@ -43,12 +48,32 @@ export default function QuizPage() {
   const [score, setScore] = useState(0);
   const [quizFinished, setQuizFinished] = useState(false);
   const [savingResult, setSavingResult] = useState(false);
+  const [studentName, setStudentName] = useState("");
 
   useEffect(() => {
     if (user) {
       loadQuizQuestions();
+      loadStudentName();
     }
   }, [user]);
+
+  async function loadStudentName() {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("students")
+      .select("id, full_name")
+      .eq("parent_user_id", user.id)
+      .eq("is_primary", true)
+      .maybeSingle();
+
+    if (error || !data) {
+      setStudentName("");
+      return;
+    }
+
+    setStudentName((data as StudentRow).full_name || "");
+  }
 
   async function loadQuizQuestions() {
     setLoadingQuiz(true);
@@ -310,7 +335,12 @@ export default function QuizPage() {
       <section className="mx-auto max-w-4xl px-6 py-10">
         <div className="rounded-2xl border bg-white p-8 shadow-sm">
           <div className="mb-6 flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-slate-900">Vocabulary Quiz</h1>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Vocabulary Quiz</h1>
+              {studentName && (
+                <p className="mt-1 text-sm text-slate-600">Student: {studentName}</p>
+              )}
+            </div>
             <p className="text-sm text-slate-600">
               Question {currentQuestionIndex + 1} of {questions.length}
             </p>
