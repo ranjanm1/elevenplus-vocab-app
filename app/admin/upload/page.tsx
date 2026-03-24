@@ -9,12 +9,29 @@ function makeSlug(word: string) {
   return word.trim().toLowerCase().replace(/\s+/g, "-");
 }
 
+type VocabularyRecord = {
+  word: string;
+  slug: string;
+  definition: string;
+  difficulty: string;
+  example_sentence: string;
+  synonyms: string;
+  antonyms: string;
+  topic: string;
+  premium_only: boolean;
+  quiz_option_1: string;
+  quiz_option_2: string;
+  quiz_option_3: string;
+  active: boolean;
+};
+
 export default function AdminUploadPage() {
   const { user, authLoading } = useAuth();
 
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [loadingRole, setLoadingRole] = useState(false);
 
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState("");
   const [csvText, setCsvText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -57,74 +74,120 @@ export default function AdminUploadPage() {
     }
   }
 
+  function parseCsvRows(rawText: string): VocabularyRecord[] {
+    const lines = rawText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length === 0) {
+      throw new Error("No CSV rows found.");
+    }
+
+    const header = lines[0].toLowerCase();
+    const hasHeader = header.includes("word") && header.includes("definition");
+
+    const dataLines = hasHeader ? lines.slice(1) : lines;
+
+    if (dataLines.length === 0) {
+      throw new Error("CSV file has no data rows.");
+    }
+
+    return dataLines.map((line, index) => {
+      const parts = line.split(",").map((part) => part.trim());
+
+      if (parts.length < 11) {
+        throw new Error(
+          `Row ${index + 1} does not have 11 columns. Please check the format.`
+        );
+      }
+
+      const [
+        word,
+        definition,
+        difficulty,
+        example_sentence,
+        synonyms,
+        antonyms,
+        topic,
+        premium_only,
+        quiz_option_1,
+        quiz_option_2,
+        quiz_option_3,
+      ] = parts;
+
+      if (!word) {
+        throw new Error(`Row ${index + 1} is missing the word value.`);
+      }
+
+      return {
+        word,
+        slug: makeSlug(word),
+        definition,
+        difficulty,
+        example_sentence,
+        synonyms,
+        antonyms,
+        topic,
+        premium_only: premium_only.toLowerCase() === "true",
+        quiz_option_1,
+        quiz_option_2,
+        quiz_option_3,
+        active: true,
+      };
+    });
+  }
+
+  async function saveRecords(records: VocabularyRecord[]) {
+    const { error } = await supabase
+      .from("vocabulary_words")
+      .upsert(records, { onConflict: "slug" });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
   async function handleProcessPastedContent() {
     setSubmitting(true);
     setSuccessMessage("");
     setErrorMessage("");
 
     try {
-      const lines = csvText
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-
-      if (lines.length === 0) {
-        throw new Error("Please paste at least one CSV row.");
-      }
-
-      const records = lines.map((line, index) => {
-        const parts = line.split(",").map((part) => part.trim());
-
-        if (parts.length < 11) {
-          throw new Error(
-            `Row ${index + 1} does not have 11 columns. Please check the format.`
-          );
-        }
-
-        const [
-          word,
-          definition,
-          difficulty,
-          example_sentence,
-          synonyms,
-          antonyms,
-          topic,
-          premium_only,
-          quiz_option_1,
-          quiz_option_2,
-          quiz_option_3,
-        ] = parts;
-
-        return {
-          word,
-          slug: makeSlug(word),
-          definition,
-          difficulty,
-          example_sentence,
-          synonyms,
-          antonyms,
-          topic,
-          premium_only: premium_only.toLowerCase() === "true",
-          quiz_option_1,
-          quiz_option_2,
-          quiz_option_3,
-          active: true,
-        };
-      });
-
-      const { error } = await supabase
-        .from("vocabulary_words")
-        .upsert(records, { onConflict: "slug" });
-
-      if (error) {
-        throw new Error(error.message);
-      }
+      const records = parseCsvRows(csvText);
+      await saveRecords(records);
 
       setSuccessMessage(`${records.length} word(s) uploaded successfully.`);
       setCsvText("");
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Upload failed."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleUploadCsvFile() {
+    setSubmitting(true);
+    setSuccessMessage("");
+    setErrorMessage("");
+
+    try {
+      if (!selectedFile) {
+        throw new Error("Please choose a CSV file first.");
+      }
+
+      const fileText = await selectedFile.text();
+      const records = parseCsvRows(fileText);
+      await saveRecords(records);
+
+      setSuccessMessage(`${records.length} word(s) uploaded successfully.`);
+      setSelectedFile(null);
+      setSelectedFileName("");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "CSV upload failed."
       );
     } finally {
       setSubmitting(false);
@@ -256,7 +319,8 @@ export default function AdminUploadPage() {
                 type="file"
                 accept=".csv"
                 onChange={(e) => {
-                  const file = e.target.files?.[0];
+                  const file = e.target.files?.[0] || null;
+                  setSelectedFile(file);
                   setSelectedFileName(file ? file.name : "");
                 }}
                 className="block w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm file:mr-4 file:rounded-md file:border-0 file:bg-green-700 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white"
@@ -271,9 +335,11 @@ export default function AdminUploadPage() {
 
             <button
               type="button"
-              className="mt-6 rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+              onClick={handleUploadCsvFile}
+              disabled={submitting || !selectedFile}
+              className="mt-6 rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Upload CSV
+              {submitting ? "Uploading..." : "Upload CSV"}
             </button>
           </div>
         </div>
