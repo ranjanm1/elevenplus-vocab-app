@@ -54,6 +54,9 @@ export default function AdminUploadPage() {
   const [submitting, setSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [databaseWordCount, setDatabaseWordCount] = useState<number | null>(null);
+  const [wordCountLoading, setWordCountLoading] = useState(false);
+  const [wordCountError, setWordCountError] = useState("");
 
   useEffect(() => {
     if (user) {
@@ -62,6 +65,12 @@ export default function AdminUploadPage() {
       setIsAdmin(false);
     }
   }, [user, authLoading]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      void loadDatabaseWordCount();
+    }
+  }, [isAdmin]);
 
   async function loadRole() {
     if (!user) return;
@@ -271,6 +280,30 @@ export default function AdminUploadPage() {
     }
   }
 
+  async function loadDatabaseWordCount() {
+    setWordCountLoading(true);
+    try {
+      const { count, error } = await supabase
+        .from("vocabulary_words")
+        .select("*", { count: "exact", head: true });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setDatabaseWordCount(count ?? 0);
+      setWordCountError("");
+    } catch (error) {
+      setWordCountError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load the current word count."
+      );
+    } finally {
+      setWordCountLoading(false);
+    }
+  }
+
   async function handleProcessPastedContent() {
     setSubmitting(true);
     setSuccessMessage("");
@@ -279,6 +312,7 @@ export default function AdminUploadPage() {
     try {
       const records = parseCsvRows(csvText);
       await saveRecords(records);
+      await loadDatabaseWordCount();
 
       setSuccessMessage(`${records.length} word(s) uploaded successfully.`);
       setCsvText("");
@@ -311,6 +345,7 @@ export default function AdminUploadPage() {
       console.log("Parsed records:", records);
 
       await saveRecords(records);
+      await loadDatabaseWordCount();
 
       setSuccessMessage(`${records.length} word(s) uploaded successfully.`);
       setSelectedFile(null);
@@ -407,6 +442,18 @@ export default function AdminUploadPage() {
             Welcome, {displayName}. Add new vocabulary using a CSV file or by
             pasting structured text below.
           </p>
+          <div className="mt-4 rounded-xl border border-green-300 bg-white/70 px-4 py-3">
+            <p className="text-sm font-medium text-green-950">
+              Live database word count:{" "}
+              {wordCountLoading ? "Loading..." : databaseWordCount ?? 0}
+            </p>
+            <p className="mt-1 text-sm text-slate-700">
+              Current total words stored in the vocabulary database.
+            </p>
+            {wordCountError && (
+              <p className="mt-2 text-sm text-amber-700">{wordCountError}</p>
+            )}
+          </div>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
