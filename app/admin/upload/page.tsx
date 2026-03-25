@@ -42,6 +42,14 @@ type VocabularyRecord = {
   active: boolean;
 };
 
+type ImportSummary = {
+  templateCheckPassed: boolean;
+  totalRowsInFile: number;
+  insertedCount: number;
+  duplicateCount: number;
+  totalWordsAfterInsert: number;
+};
+
 export default function AdminUploadPage() {
   const { user, authLoading } = useAuth();
 
@@ -54,6 +62,8 @@ export default function AdminUploadPage() {
   const [submitting, setSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
+  const [importSource, setImportSource] = useState<"file" | "paste" | null>(null);
   const [databaseWordCount, setDatabaseWordCount] = useState<number | null>(null);
   const [wordCountLoading, setWordCountLoading] = useState(false);
   const [wordCountError, setWordCountError] = useState("");
@@ -270,16 +280,6 @@ export default function AdminUploadPage() {
     });
   }
 
-  async function saveRecords(records: VocabularyRecord[]) {
-    const { error } = await supabase
-      .from("vocabulary_words")
-      .upsert(records, { onConflict: "slug" });
-
-    if (error) {
-      throw new Error(error.message);
-    }
-  }
-
   async function loadDatabaseWordCount() {
     setWordCountLoading(true);
     try {
@@ -293,28 +293,106 @@ export default function AdminUploadPage() {
 
       setDatabaseWordCount(count ?? 0);
       setWordCountError("");
+      return count ?? 0;
     } catch (error) {
       setWordCountError(
         error instanceof Error
           ? error.message
           : "Unable to load the current word count."
       );
+      throw error;
     } finally {
       setWordCountLoading(false);
     }
+  }
+
+  async function insertRecords(records: VocabularyRecord[]) {
+    if (!records.length) {
+      return;
+    }
+
+    const { error } = await supabase.from("vocabulary_words").insert(records);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  async function fetchExistingSlugs(slugs: string[]) {
+    const existingSlugs = new Set<string>();
+    const chunkSize = 200;
+
+    for (let index = 0; index < slugs.length; index += chunkSize) {
+      const chunk = slugs.slice(index, index + chunkSize);
+      const { data, error } = await supabase
+        .from("vocabulary_words")
+        .select("slug")
+        .in("slug", chunk);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      data?.forEach((row) => {
+        if (row.slug) {
+          existingSlugs.add(row.slug);
+        }
+      });
+    }
+
+    return existingSlugs;
+  }
+
+  async function importRecords(records: VocabularyRecord[]) {
+    const existingSlugs = await fetchExistingSlugs(
+      records.map((record) => record.slug)
+    );
+    const seenIncomingSlugs = new Set<string>();
+    const recordsToInsert: VocabularyRecord[] = [];
+    let duplicateCount = 0;
+
+    for (const record of records) {
+      if (seenIncomingSlugs.has(record.slug)) {
+        duplicateCount += 1;
+        continue;
+      }
+
+      seenIncomingSlugs.add(record.slug);
+
+      if (existingSlugs.has(record.slug)) {
+        duplicateCount += 1;
+        continue;
+      }
+
+      recordsToInsert.push(record);
+    }
+
+    await insertRecords(recordsToInsert);
+    const totalWordsAfterInsert = await loadDatabaseWordCount();
+
+    return {
+      templateCheckPassed: true,
+      totalRowsInFile: records.length,
+      insertedCount: recordsToInsert.length,
+      duplicateCount,
+      totalWordsAfterInsert,
+    } satisfies ImportSummary;
   }
 
   async function handleProcessPastedContent() {
     setSubmitting(true);
     setSuccessMessage("");
     setErrorMessage("");
+    setImportSummary(null);
+    setImportSource(null);
 
     try {
       const records = parseCsvRows(csvText);
-      await saveRecords(records);
-      await loadDatabaseWordCount();
+      const summary = await importRecords(records);
 
-      setSuccessMessage(`${records.length} word(s) uploaded successfully.`);
+      setSuccessMessage("CSV template check passed and import completed.");
+      setImportSummary(summary);
+      setImportSource("paste");
       setCsvText("");
     } catch (error) {
       console.error("Paste upload failed:", error);
@@ -330,6 +408,8 @@ export default function AdminUploadPage() {
     setSubmitting(true);
     setSuccessMessage("");
     setErrorMessage("");
+    setImportSummary(null);
+    setImportSource(null);
 
     try {
       if (!selectedFile) {
@@ -344,10 +424,11 @@ export default function AdminUploadPage() {
       const records = parseCsvRows(fileText);
       console.log("Parsed records:", records);
 
-      await saveRecords(records);
-      await loadDatabaseWordCount();
+      const summary = await importRecords(records);
 
-      setSuccessMessage(`${records.length} word(s) uploaded successfully.`);
+      setSuccessMessage("CSV template check passed and import completed.");
+      setImportSummary(summary);
+      setImportSource("file");
       setSelectedFile(null);
       setSelectedFileName("");
     } catch (error) {
@@ -511,6 +592,8 @@ export default function AdminUploadPage() {
                   setSelectedFileName(file ? file.name : "");
                   setSuccessMessage("");
                   setErrorMessage("");
+                  setImportSummary(null);
+                  setImportSource(null);
                 }}
                 className="block w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm file:mr-4 file:rounded-md file:border-0 file:bg-green-700 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white"
               />
@@ -543,6 +626,28 @@ export default function AdminUploadPage() {
                 {successMessage}
               </p>
             )}
+
+            {importSummary && importSource === "file" && (
+              <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-4 text-sm text-green-900">
+                <p className="font-semibold">Import summary</p>
+                <p className="mt-2">
+                  CSV template check:{" "}
+                  {importSummary.templateCheckPassed ? "Passed" : "Failed"}
+                </p>
+                <p className="mt-1">
+                  Rows in file: {importSummary.totalRowsInFile}
+                </p>
+                <p className="mt-1">
+                  New words inserted: {importSummary.insertedCount}
+                </p>
+                <p className="mt-1">
+                  Duplicate rows not inserted: {importSummary.duplicateCount}
+                </p>
+                <p className="mt-1">
+                  Current total words: {importSummary.totalWordsAfterInsert}
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -556,7 +661,13 @@ export default function AdminUploadPage() {
 
           <textarea
             value={csvText}
-            onChange={(e) => setCsvText(e.target.value)}
+            onChange={(e) => {
+              setCsvText(e.target.value);
+              setSuccessMessage("");
+              setErrorMessage("");
+              setImportSummary(null);
+              setImportSource(null);
+            }}
             placeholder="Paste CSV rows here..."
             rows={10}
             className="mt-4 w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
@@ -570,6 +681,26 @@ export default function AdminUploadPage() {
           >
             {submitting ? "Processing..." : "Process pasted content"}
           </button>
+
+          {importSummary && importSource === "paste" && (
+            <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-4 text-sm text-green-900">
+              <p className="font-semibold">Import summary</p>
+              <p className="mt-2">
+                CSV template check:{" "}
+                {importSummary.templateCheckPassed ? "Passed" : "Failed"}
+              </p>
+              <p className="mt-1">Rows in file: {importSummary.totalRowsInFile}</p>
+              <p className="mt-1">
+                New words inserted: {importSummary.insertedCount}
+              </p>
+              <p className="mt-1">
+                Duplicate rows not inserted: {importSummary.duplicateCount}
+              </p>
+              <p className="mt-1">
+                Current total words: {importSummary.totalWordsAfterInsert}
+              </p>
+            </div>
+          )}
         </div>
       </section>
     </main>
