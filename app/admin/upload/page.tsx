@@ -42,12 +42,29 @@ type VocabularyRecord = {
   active: boolean;
 };
 
+type ExistingVocabularyRecord = {
+  slug: string;
+  word: string;
+  definition: string;
+  difficulty: string | null;
+  example_sentence: string | null;
+  synonyms: string | null;
+  antonyms: string | null;
+  topic: string | null;
+  premium_only: boolean;
+  quiz_option_1: string | null;
+  quiz_option_2: string | null;
+  quiz_option_3: string | null;
+  active: boolean;
+};
+
 type ImportSummary = {
   templateCheckPassed: boolean;
   totalRowsInFile: number;
   insertedCount: number;
+  updatedCount: number;
   duplicateCount: number;
-  totalWordsAfterInsert: number;
+  totalWordsAfterImport: number;
 };
 
 export default function AdminUploadPage() {
@@ -67,13 +84,15 @@ export default function AdminUploadPage() {
   const [databaseWordCount, setDatabaseWordCount] = useState<number | null>(null);
   const [wordCountLoading, setWordCountLoading] = useState(false);
   const [wordCountError, setWordCountError] = useState("");
+  const [downloadingExport, setDownloadingExport] = useState(false);
 
   useEffect(() => {
     if (user) {
-      loadRole();
+      void loadRole();
     } else if (!authLoading) {
       setIsAdmin(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, authLoading]);
 
   useEffect(() => {
@@ -318,15 +337,72 @@ export default function AdminUploadPage() {
     }
   }
 
-  async function fetchExistingSlugs(slugs: string[]) {
-    const existingSlugs = new Set<string>();
+  async function updateRecords(records: VocabularyRecord[]) {
+    for (const record of records) {
+      const { error } = await supabase
+        .from("vocabulary_words")
+        .update({
+          word: record.word,
+          slug: record.slug,
+          definition: record.definition,
+          difficulty: record.difficulty || null,
+          example_sentence: record.example_sentence || null,
+          synonyms: record.synonyms || null,
+          antonyms: record.antonyms || null,
+          topic: record.topic || null,
+          premium_only: record.premium_only,
+          quiz_option_1: record.quiz_option_1 || null,
+          quiz_option_2: record.quiz_option_2 || null,
+          quiz_option_3: record.quiz_option_3 || null,
+          active: true,
+        })
+        .eq("slug", record.slug);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+    }
+  }
+
+  function normalizeNullableText(value: string | null | undefined) {
+    return (value ?? "").trim();
+  }
+
+  function hasRecordChanged(
+    incomingRecord: VocabularyRecord,
+    existingRecord: ExistingVocabularyRecord
+  ) {
+    return (
+      incomingRecord.word !== normalizeNullableText(existingRecord.word) ||
+      incomingRecord.definition !== normalizeNullableText(existingRecord.definition) ||
+      incomingRecord.difficulty !== normalizeNullableText(existingRecord.difficulty) ||
+      incomingRecord.example_sentence !==
+        normalizeNullableText(existingRecord.example_sentence) ||
+      incomingRecord.synonyms !== normalizeNullableText(existingRecord.synonyms) ||
+      incomingRecord.antonyms !== normalizeNullableText(existingRecord.antonyms) ||
+      incomingRecord.topic !== normalizeNullableText(existingRecord.topic) ||
+      incomingRecord.premium_only !== existingRecord.premium_only ||
+      incomingRecord.quiz_option_1 !==
+        normalizeNullableText(existingRecord.quiz_option_1) ||
+      incomingRecord.quiz_option_2 !==
+        normalizeNullableText(existingRecord.quiz_option_2) ||
+      incomingRecord.quiz_option_3 !==
+        normalizeNullableText(existingRecord.quiz_option_3) ||
+      incomingRecord.active !== existingRecord.active
+    );
+  }
+
+  async function fetchExistingRecords(slugs: string[]) {
+    const existingRecords = new Map<string, ExistingVocabularyRecord>();
     const chunkSize = 200;
 
     for (let index = 0; index < slugs.length; index += chunkSize) {
       const chunk = slugs.slice(index, index + chunkSize);
       const { data, error } = await supabase
         .from("vocabulary_words")
-        .select("slug")
+        .select(
+          "slug, word, definition, difficulty, example_sentence, synonyms, antonyms, topic, premium_only, quiz_option_1, quiz_option_2, quiz_option_3, active"
+        )
         .in("slug", chunk);
 
       if (error) {
@@ -335,20 +411,21 @@ export default function AdminUploadPage() {
 
       data?.forEach((row) => {
         if (row.slug) {
-          existingSlugs.add(row.slug);
+          existingRecords.set(row.slug, row as ExistingVocabularyRecord);
         }
       });
     }
 
-    return existingSlugs;
+    return existingRecords;
   }
 
   async function importRecords(records: VocabularyRecord[]) {
-    const existingSlugs = await fetchExistingSlugs(
+    const existingRecords = await fetchExistingRecords(
       records.map((record) => record.slug)
     );
     const seenIncomingSlugs = new Set<string>();
     const recordsToInsert: VocabularyRecord[] = [];
+    const recordsToUpdate: VocabularyRecord[] = [];
     let duplicateCount = 0;
 
     for (const record of records) {
@@ -359,8 +436,12 @@ export default function AdminUploadPage() {
 
       seenIncomingSlugs.add(record.slug);
 
-      if (existingSlugs.has(record.slug)) {
-        duplicateCount += 1;
+      const existingRecord = existingRecords.get(record.slug);
+
+      if (existingRecord) {
+        if (hasRecordChanged(record, existingRecord)) {
+          recordsToUpdate.push(record);
+        }
         continue;
       }
 
@@ -368,15 +449,97 @@ export default function AdminUploadPage() {
     }
 
     await insertRecords(recordsToInsert);
-    const totalWordsAfterInsert = await loadDatabaseWordCount();
+    await updateRecords(recordsToUpdate);
+    const totalWordsAfterImport = await loadDatabaseWordCount();
 
     return {
       templateCheckPassed: true,
       totalRowsInFile: records.length,
       insertedCount: recordsToInsert.length,
+      updatedCount: recordsToUpdate.length,
       duplicateCount,
-      totalWordsAfterInsert,
+      totalWordsAfterImport,
     } satisfies ImportSummary;
+  }
+
+  async function downloadWordBankCsv() {
+    setDownloadingExport(true);
+    setSuccessMessage("");
+    setErrorMessage("");
+    setImportSummary(null);
+    setImportSource(null);
+
+    try {
+      const pageSize = 1000;
+      let from = 0;
+      const rows: Array<Record<(typeof REQUIRED_HEADERS)[number], string>> = [];
+
+      while (true) {
+        const { data, error } = await supabase
+          .from("vocabulary_words")
+          .select(
+            "word, definition, difficulty, example_sentence, synonyms, antonyms, topic, premium_only, quiz_option_1, quiz_option_2, quiz_option_3"
+          )
+          .order("word", { ascending: true })
+          .range(from, from + pageSize - 1);
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        const batch = data ?? [];
+
+        rows.push(
+          ...batch.map((row) => ({
+            word: row.word ?? "",
+            definition: row.definition ?? "",
+            difficulty: row.difficulty ?? "",
+            example_sentence: row.example_sentence ?? "",
+            synonyms: row.synonyms ?? "",
+            antonyms: row.antonyms ?? "",
+            topic: row.topic ?? "",
+            premium_only: row.premium_only ? "TRUE" : "FALSE",
+            quiz_option_1: row.quiz_option_1 ?? "",
+            quiz_option_2: row.quiz_option_2 ?? "",
+            quiz_option_3: row.quiz_option_3 ?? "",
+          }))
+        );
+
+        if (batch.length < pageSize) {
+          break;
+        }
+
+        from += pageSize;
+      }
+
+      const csvContent = Papa.unparse(rows, {
+        columns: [...REQUIRED_HEADERS],
+      });
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const dateStamp = new Date().toISOString().slice(0, 10);
+
+      link.href = url;
+      link.download = `word-bank-export-${dateStamp}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      setSuccessMessage(
+        `Downloaded ${rows.length} word${rows.length === 1 ? "" : "s"} in upload-ready CSV format.`
+      );
+    } catch (error) {
+      console.error("Word bank download failed:", error);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to download the word bank CSV."
+      );
+    } finally {
+      setDownloadingExport(false);
+    }
   }
 
   async function handleProcessPastedContent() {
@@ -521,7 +684,8 @@ export default function AdminUploadPage() {
           <h1 className="text-3xl font-bold text-green-950">Upload Vocabulary</h1>
           <p className="mt-2 text-slate-700">
             Welcome, {displayName}. Add new vocabulary using a CSV file or by
-            pasting structured text below.
+            pasting structured text below, or download the full word bank in the
+            same editable template.
           </p>
           <div className="mt-4 rounded-xl border border-green-300 bg-white/70 px-4 py-3">
             <p className="text-sm font-medium text-green-950">
@@ -531,9 +695,24 @@ export default function AdminUploadPage() {
             <p className="mt-1 text-sm text-slate-700">
               Current total words stored in the vocabulary database.
             </p>
+            <p className="mt-1 text-sm text-slate-700">
+              Re-uploaded CSV rows update existing entries when the word matches
+              an existing record. If you change the word itself, it will be
+              treated as a new entry.
+            </p>
             {wordCountError && (
               <p className="mt-2 text-sm text-amber-700">{wordCountError}</p>
             )}
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={downloadWordBankCsv}
+                disabled={downloadingExport}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {downloadingExport ? "Preparing CSV..." : "Download full word bank CSV"}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -566,8 +745,8 @@ export default function AdminUploadPage() {
                 Download sample CSV
               </a>
               <span className="text-sm text-slate-600">
-                You can download this sample, follow the structure, or copy and
-                paste rows below.
+                You can download the sample, export the live word bank above,
+                follow the structure, or copy and paste rows below.
               </span>
             </div>
           </div>
@@ -641,10 +820,13 @@ export default function AdminUploadPage() {
                   New words inserted: {importSummary.insertedCount}
                 </p>
                 <p className="mt-1">
-                  Duplicate rows not inserted: {importSummary.duplicateCount}
+                  Existing words updated: {importSummary.updatedCount}
                 </p>
                 <p className="mt-1">
-                  Current total words: {importSummary.totalWordsAfterInsert}
+                  Duplicate rows in upload skipped: {importSummary.duplicateCount}
+                </p>
+                <p className="mt-1">
+                  Current total words: {importSummary.totalWordsAfterImport}
                 </p>
               </div>
             )}
@@ -694,10 +876,13 @@ export default function AdminUploadPage() {
                 New words inserted: {importSummary.insertedCount}
               </p>
               <p className="mt-1">
-                Duplicate rows not inserted: {importSummary.duplicateCount}
+                Existing words updated: {importSummary.updatedCount}
               </p>
               <p className="mt-1">
-                Current total words: {importSummary.totalWordsAfterInsert}
+                Duplicate rows in upload skipped: {importSummary.duplicateCount}
+              </p>
+              <p className="mt-1">
+                Current total words: {importSummary.totalWordsAfterImport}
               </p>
             </div>
           )}
