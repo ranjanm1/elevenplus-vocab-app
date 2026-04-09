@@ -77,6 +77,22 @@ function userLabel(userId: string) {
   return `Student ${userId.slice(0, 8)}`;
 }
 
+function getDisplayName(
+  userId: string,
+  profileMap: Record<string, ProfileRow>,
+  studentMap: Record<string, StudentRow>
+) {
+  const profile = profileMap[userId];
+  const student = studentMap[userId];
+
+  return (
+    student?.full_name?.trim() ||
+    profile?.full_name?.trim() ||
+    profile?.email?.trim() ||
+    userLabel(userId)
+  );
+}
+
 function isMissingTableError(message: string) {
   const lower = message.toLowerCase();
   return (
@@ -85,7 +101,7 @@ function isMissingTableError(message: string) {
 }
 
 export default function AdminResultsPage() {
-  const { user, authLoading } = useAuth();
+  const { user, session, authLoading } = useAuth();
 
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [loadingRole, setLoadingRole] = useState(false);
@@ -179,31 +195,79 @@ export default function AdminResultsPage() {
       let profileRows: ProfileRow[] = [];
       let studentRows: StudentRow[] = [];
       if (userIds.length > 0) {
-        const { data: profilesData, error: profilesError } = await supabase
-          .from("profiles")
-          .select("id, full_name, email")
-          .in("id", userIds);
+        let usedAdminDirectoryRoute = false;
 
-        if (profilesError) {
-          if (!isMissingTableError(profilesError.message)) {
-            throw new Error(profilesError.message);
+        if (session?.access_token) {
+          try {
+            const response = await fetch("/api/admin/student-directory", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify({ userIds }),
+            });
+
+            if (response.ok) {
+              const payload = (await response.json()) as {
+                profiles?: ProfileRow[];
+                students?: StudentRow[];
+              };
+
+              profileRows = payload.profiles || [];
+              studentRows = payload.students || [];
+              usedAdminDirectoryRoute = true;
+            }
+          } catch (error) {
+            console.warn("Admin directory route failed, falling back to client queries.", error);
           }
-        } else {
-          profileRows = (profilesData as ProfileRow[]) || [];
         }
 
-        const { data: studentsData, error: studentsError } = await supabase
-          .from("students")
-          .select("id, parent_user_id, full_name, is_primary")
-          .in("parent_user_id", userIds)
-          .eq("is_primary", true);
+        if (!usedAdminDirectoryRoute) {
+          const { data: profilesData, error: profilesError } = await supabase
+            .from("profiles")
+            .select("id, full_name, email")
+            .in("id", userIds);
 
-        if (studentsError) {
-          if (!isMissingTableError(studentsError.message)) {
-            throw new Error(studentsError.message);
+          if (profilesError) {
+            if (!isMissingTableError(profilesError.message)) {
+              throw new Error(profilesError.message);
+            }
+          } else {
+            profileRows = (profilesData as ProfileRow[]) || [];
           }
-        } else {
-          studentRows = (studentsData as StudentRow[]) || [];
+
+          const [
+            { data: studentsByParentData, error: studentsByParentError },
+            { data: studentsByIdData, error: studentsByIdError },
+          ] = await Promise.all([
+            supabase
+              .from("students")
+              .select("id, parent_user_id, full_name, is_primary")
+              .in("parent_user_id", userIds)
+              .eq("is_primary", true),
+            supabase
+              .from("students")
+              .select("id, parent_user_id, full_name, is_primary")
+              .in("id", userIds),
+          ]);
+
+          if (studentsByParentError) {
+            if (!isMissingTableError(studentsByParentError.message)) {
+              throw new Error(studentsByParentError.message);
+            }
+          }
+
+          if (studentsByIdError) {
+            if (!isMissingTableError(studentsByIdError.message)) {
+              throw new Error(studentsByIdError.message);
+            }
+          }
+
+          studentRows = [
+            ...((studentsByParentData as StudentRow[]) || []),
+            ...((studentsByIdData as StudentRow[]) || []),
+          ];
         }
       }
 
@@ -215,6 +279,7 @@ export default function AdminResultsPage() {
 
       const nextStudentMap: Record<string, StudentRow> = {};
       for (const student of studentRows) {
+        nextStudentMap[student.id] = student;
         nextStudentMap[student.parent_user_id] = student;
       }
       setStudentMap(nextStudentMap);
@@ -324,12 +389,7 @@ export default function AdminResultsPage() {
     return summaries.filter((item) => {
       const idMatch = item.userId.toLowerCase().includes(query);
       const profile = profileMap[item.userId];
-      const student = studentMap[item.userId];
-      const name = (
-        student?.full_name ||
-        profile?.full_name ||
-        userLabel(item.userId)
-      ).toLowerCase();
+      const name = getDisplayName(item.userId, profileMap, studentMap).toLowerCase();
       const email = (profile?.email || "").toLowerCase();
       return idMatch || name.includes(query) || email.includes(query);
     });
@@ -512,11 +572,11 @@ export default function AdminResultsPage() {
                     <td className="px-4 py-3">
                       {(() => {
                         const profile = profileMap[student.userId];
-                        const studentProfile = studentMap[student.userId];
-                        const displayName =
-                          studentProfile?.full_name?.trim() ||
-                          profile?.full_name?.trim() ||
-                          userLabel(student.userId);
+                        const displayName = getDisplayName(
+                          student.userId,
+                          profileMap,
+                          studentMap
+                        );
                         return (
                           <>
                             <div className="font-medium text-slate-900">{displayName}</div>
@@ -577,11 +637,11 @@ export default function AdminResultsPage() {
           <div className="mt-6 rounded-xl border bg-white p-6 shadow-sm">
             {(() => {
               const profile = profileMap[selectedUserId];
-              const studentProfile = studentMap[selectedUserId];
-              const displayName =
-                studentProfile?.full_name?.trim() ||
-                profile?.full_name?.trim() ||
-                userLabel(selectedUserId);
+              const displayName = getDisplayName(
+                selectedUserId,
+                profileMap,
+                studentMap
+              );
               return (
                 <>
                   <h2 className="text-xl font-semibold text-slate-900">
