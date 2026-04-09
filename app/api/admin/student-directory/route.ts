@@ -133,7 +133,7 @@ export async function POST(request: NextRequest) {
     }
 
     const unresolvedUserIds = userIds.filter(
-      (userId) => !profileMap.has(userId) && !studentsMap.has(userId)
+      (userId: string) => !profileMap.has(userId) && !studentsMap.has(userId)
     );
 
     for (const userId of unresolvedUserIds) {
