@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/components/AuthProvider";
@@ -36,6 +36,59 @@ type StudentSummary = {
   lastActive: string;
   trendDelta: number | null;
   status: "On Track" | "Watch" | "At Risk";
+};
+
+type AssessmentResultSummary = {
+  id: string;
+  assigned_at: string;
+  available_from: string | null;
+  due_at: string | null;
+  max_attempts: number | null;
+  status: string;
+  student_id: string;
+  student_name: string | null;
+  parent_name: string | null;
+  parent_email: string | null;
+  assessment_definition_id: string;
+  assessment_title: string;
+  assessment_type: string | null;
+  assessment_description: string | null;
+  attempt_count: number;
+  completed_attempt_count: number;
+  latest_attempt_at: string | null;
+  latest_percentage: number | null;
+  latest_score: number | null;
+  latest_max_score: number | null;
+  best_percentage: number | null;
+};
+
+type AssessmentAttemptDetail = {
+  id: string;
+  attempt_number: number;
+  status: string;
+  created_at: string;
+  started_at: string | null;
+  submitted_at: string | null;
+  final_score: number | null;
+  max_score: number | null;
+  percentage: number | null;
+  feedback: string | null;
+  responses: Array<{
+    assessment_item_id: string;
+    item_order: number | null;
+    prompt: string | null;
+    word: string | null;
+    selected_answer: string | null;
+    correct_answer: string | null;
+    is_correct: boolean | null;
+    final_score: number | null;
+    feedback: string | null;
+  }>;
+};
+
+type AssessmentDetailPayload = {
+  assignment: AssessmentResultSummary;
+  attempts: AssessmentAttemptDetail[];
 };
 
 const RANGE_OPTIONS = [
@@ -93,6 +146,45 @@ function getDisplayName(
   );
 }
 
+function getAssignmentStatusLabel(status: string) {
+  switch (status) {
+    case "assigned":
+      return "Assigned";
+    case "in_progress":
+      return "In progress";
+    case "submitted":
+      return "Submitted";
+    case "reviewed":
+      return "Reviewed";
+    case "expired":
+      return "Expired";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return status.replace(/_/g, " ");
+  }
+}
+
+function getAssignmentStatusClasses(status: string) {
+  switch (status) {
+    case "submitted":
+    case "reviewed":
+      return "bg-green-100 text-green-800";
+    case "in_progress":
+      return "bg-blue-100 text-blue-800";
+    case "expired":
+    case "cancelled":
+      return "bg-red-100 text-red-700";
+    default:
+      return "bg-amber-100 text-amber-800";
+  }
+}
+
+function formatScore(score: number | null, maxScore: number | null) {
+  if (score === null || maxScore === null) return "—";
+  return `${score}/${maxScore}`;
+}
+
 function isMissingTableError(message: string) {
   const lower = message.toLowerCase();
   return (
@@ -107,6 +199,8 @@ export default function AdminResultsPage() {
   const [loadingRole, setLoadingRole] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [loadingStudentDetail, setLoadingStudentDetail] = useState(false);
+  const [loadingAssessmentResults, setLoadingAssessmentResults] = useState(false);
+  const [loadingAssignmentDetail, setLoadingAssignmentDetail] = useState(false);
 
   const [rangeKey, setRangeKey] = useState<RangeKey>("30d");
   const [searchText, setSearchText] = useState("");
@@ -117,6 +211,14 @@ export default function AdminResultsPage() {
   const [selectedAttempts, setSelectedAttempts] = useState<QuizResultRow[]>([]);
   const [profileMap, setProfileMap] = useState<Record<string, ProfileRow>>({});
   const [studentMap, setStudentMap] = useState<Record<string, StudentRow>>({});
+  const [assessmentSummaries, setAssessmentSummaries] = useState<AssessmentResultSummary[]>([]);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
+  const [selectedAssignmentDetail, setSelectedAssignmentDetail] =
+    useState<AssessmentDetailPayload | null>(null);
+  const [showAllResponsesByAttempt, setShowAllResponsesByAttempt] = useState<
+    Record<string, boolean>
+  >({});
+  const assignmentDetailRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -124,13 +226,33 @@ export default function AdminResultsPage() {
     } else if (!authLoading) {
       setIsAdmin(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, authLoading]);
 
   useEffect(() => {
     if (isAdmin) {
       loadResults();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, rangeKey]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      void loadAssessmentResults();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, session?.access_token]);
+
+  useEffect(() => {
+    if (!selectedAssignmentId) return;
+
+    requestAnimationFrame(() => {
+      assignmentDetailRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, [selectedAssignmentId, loadingAssignmentDetail, selectedAssignmentDetail]);
 
   async function loadRole() {
     if (!user) return;
@@ -383,6 +505,100 @@ export default function AdminResultsPage() {
     }
   }
 
+  async function loadAssessmentResults() {
+    if (!session?.access_token) return;
+
+    setLoadingAssessmentResults(true);
+
+    try {
+      const response = await fetch("/api/admin/assessment-results", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      const payload = (await response.json()) as {
+        assignments?: AssessmentResultSummary[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to load assigned assessment results.");
+      }
+
+      const assignments = payload.assignments || [];
+      setAssessmentSummaries(assignments);
+
+      if (selectedAssignmentId) {
+        const stillExists = assignments.some(
+          (assignment) => assignment.id === selectedAssignmentId
+        );
+        if (!stillExists) {
+          setSelectedAssignmentId(null);
+          setSelectedAssignmentDetail(null);
+        }
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to load assigned assessment results."
+      );
+      setAssessmentSummaries([]);
+      setSelectedAssignmentId(null);
+      setSelectedAssignmentDetail(null);
+    } finally {
+      setLoadingAssessmentResults(false);
+    }
+  }
+
+  async function loadAssignmentDetail(assignmentId: string) {
+    if (!session?.access_token) return;
+
+    setSelectedAssignmentId(assignmentId);
+    setLoadingAssignmentDetail(true);
+    setSelectedAssignmentDetail(null);
+
+    try {
+      const response = await fetch(
+        `/api/admin/assessment-results?assignmentId=${encodeURIComponent(assignmentId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        }
+      );
+
+      const payload = (await response.json()) as AssessmentDetailPayload & {
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to load assignment detail.");
+      }
+
+      setSelectedAssignmentDetail({
+        assignment: payload.assignment,
+        attempts: payload.attempts || [],
+      });
+      setShowAllResponsesByAttempt({});
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to load assignment detail."
+      );
+      setSelectedAssignmentDetail(null);
+    } finally {
+      setLoadingAssignmentDetail(false);
+    }
+  }
+
+  function toggleAttemptResponses(attemptId: string) {
+    setShowAllResponsesByAttempt((current) => ({
+      ...current,
+      [attemptId]: !current[attemptId],
+    }));
+  }
+
   const filteredSummaries = useMemo(() => {
     const query = searchText.trim().toLowerCase();
     if (!query) return summaries;
@@ -395,6 +611,25 @@ export default function AdminResultsPage() {
     });
   }, [summaries, searchText, profileMap, studentMap]);
 
+  const filteredAssessmentSummaries = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    if (!query) return assessmentSummaries;
+
+    return assessmentSummaries.filter((assignment) => {
+      const studentName = (assignment.student_name || "").toLowerCase();
+      const parentEmail = (assignment.parent_email || "").toLowerCase();
+      const title = assignment.assessment_title.toLowerCase();
+      const idMatch = assignment.id.toLowerCase().includes(query);
+
+      return (
+        idMatch ||
+        studentName.includes(query) ||
+        parentEmail.includes(query) ||
+        title.includes(query)
+      );
+    });
+  }, [assessmentSummaries, searchText]);
+
   const totalAttempts = summaries.reduce((sum, item) => sum + item.attempts, 0);
   const allAverages = summaries.map((item) => item.avgPercentage);
   const averageScore = allAverages.length ? average(allAverages) : 0;
@@ -404,6 +639,19 @@ export default function AdminResultsPage() {
   const atRiskStudents = summaries.filter(
     (item) => item.status === "At Risk"
   ).length;
+  const submittedAssessments = assessmentSummaries.filter((assignment) =>
+    ["submitted", "reviewed"].includes(assignment.status)
+  ).length;
+  const awaitingAssessments = assessmentSummaries.filter(
+    (assignment) =>
+      !["submitted", "reviewed", "cancelled", "expired"].includes(assignment.status)
+  ).length;
+  const latestAssessmentPercentages = assessmentSummaries
+    .map((assignment) => assignment.latest_percentage)
+    .filter((value): value is number => value !== null);
+  const averageLatestAssessmentScore = latestAssessmentPercentages.length
+    ? average(latestAssessmentPercentages)
+    : 0;
 
   if (authLoading || loadingRole) {
     return (
@@ -687,6 +935,382 @@ export default function AdminResultsPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-10 rounded-2xl border border-blue-200 bg-blue-50 p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-slate-900">
+            Assigned Assessment Results
+          </h2>
+          <p className="mt-2 text-slate-700">
+            Review which assessments were assigned, who has submitted them, and
+            how each student scored.
+          </p>
+        </div>
+
+        <div className="mt-6 grid gap-4 md:grid-cols-4">
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Assigned assessments</p>
+            <p className="mt-1 text-3xl font-bold text-slate-900">
+              {assessmentSummaries.length}
+            </p>
+          </div>
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Submitted or reviewed</p>
+            <p className="mt-1 text-3xl font-bold text-slate-900">
+              {submittedAssessments}
+            </p>
+          </div>
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Awaiting completion</p>
+            <p className="mt-1 text-3xl font-bold text-slate-900">
+              {awaitingAssessments}
+            </p>
+          </div>
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Average latest score</p>
+            <p className="mt-1 text-3xl font-bold text-slate-900">
+              {latestAssessmentPercentages.length
+                ? `${Math.round(averageLatestAssessmentScore)}%`
+                : "—"}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 overflow-x-auto rounded-xl border bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-left text-slate-600">
+              <tr>
+                <th className="px-4 py-3 font-medium">Student</th>
+                <th className="px-4 py-3 font-medium">Assessment</th>
+                <th className="px-4 py-3 font-medium">Assigned</th>
+                <th className="px-4 py-3 font-medium">Due</th>
+                <th className="px-4 py-3 font-medium">Attempts</th>
+                <th className="px-4 py-3 font-medium">Latest result</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loadingAssessmentResults ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-5 text-slate-500">
+                    Loading assigned assessment results...
+                  </td>
+                </tr>
+              ) : filteredAssessmentSummaries.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-5 text-slate-500">
+                    No assigned assessments found yet.
+                  </td>
+                </tr>
+              ) : (
+                filteredAssessmentSummaries.map((assignment) => (
+                  <tr
+                    key={assignment.id}
+                    className={`border-t ${
+                      assignment.id === selectedAssignmentId ? "bg-blue-50" : ""
+                    }`}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-900">
+                        {assignment.student_name || "Unknown student"}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {assignment.parent_email || assignment.student_id}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-900">
+                        {assignment.assessment_title}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {assignment.assessment_type || "assessment"}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {new Date(assignment.assigned_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {assignment.due_at
+                        ? new Date(assignment.due_at).toLocaleDateString()
+                        : "No due date"}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {assignment.attempt_count}
+                      {assignment.max_attempts
+                        ? ` / ${assignment.max_attempts}`
+                        : ""}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {assignment.latest_percentage !== null
+                        ? `${Math.round(assignment.latest_percentage)}% (${formatScore(
+                            assignment.latest_score,
+                            assignment.latest_max_score
+                          )})`
+                        : "Not submitted"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs font-medium ${getAssignmentStatusClasses(
+                          assignment.status
+                        )}`}
+                      >
+                        {getAssignmentStatusLabel(assignment.status)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => void loadAssignmentDetail(assignment.id)}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        {assignment.id === selectedAssignmentId
+                          ? loadingAssignmentDetail
+                            ? "Loading..."
+                            : "Viewing"
+                          : "View"}
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {selectedAssignmentId && (
+          <div
+            ref={assignmentDetailRef}
+            className="mt-6 rounded-xl border bg-white p-6 shadow-sm"
+          >
+            {selectedAssignmentDetail?.assignment ? (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-xl font-semibold text-slate-900">
+                      {selectedAssignmentDetail.assignment.assessment_title}
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {selectedAssignmentDetail.assignment.student_name ||
+                        "Unknown student"}
+                      {" • "}
+                      {selectedAssignmentDetail.assignment.parent_email ||
+                        selectedAssignmentDetail.assignment.student_id}
+                    </p>
+                    <p className="mt-2 text-xs font-medium uppercase tracking-wide text-blue-700">
+                      Assignment review
+                    </p>
+                    {selectedAssignmentDetail.assignment.assessment_description && (
+                      <p className="mt-3 max-w-3xl text-sm text-slate-600">
+                        {selectedAssignmentDetail.assignment.assessment_description}
+                      </p>
+                    )}
+                  </div>
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-medium ${getAssignmentStatusClasses(
+                      selectedAssignmentDetail.assignment.status
+                    )}`}
+                  >
+                    {getAssignmentStatusLabel(selectedAssignmentDetail.assignment.status)}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-4">
+                  <div className="rounded-lg bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">
+                      Assigned
+                    </p>
+                    <p className="mt-1 text-sm font-medium text-slate-900">
+                      {new Date(
+                        selectedAssignmentDetail.assignment.assigned_at
+                      ).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">
+                      Due
+                    </p>
+                    <p className="mt-1 text-sm font-medium text-slate-900">
+                      {selectedAssignmentDetail.assignment.due_at
+                        ? new Date(
+                            selectedAssignmentDetail.assignment.due_at
+                          ).toLocaleString()
+                        : "No due date"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">
+                      Best result
+                    </p>
+                    <p className="mt-1 text-sm font-medium text-slate-900">
+                      {selectedAssignmentDetail.assignment.best_percentage !== null
+                        ? `${Math.round(
+                            selectedAssignmentDetail.assignment.best_percentage
+                          )}%`
+                        : "No submission yet"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">
+                      Attempts used
+                    </p>
+                    <p className="mt-1 text-sm font-medium text-slate-900">
+                      {selectedAssignmentDetail.assignment.attempt_count}
+                      {selectedAssignmentDetail.assignment.max_attempts
+                        ? ` / ${selectedAssignmentDetail.assignment.max_attempts}`
+                        : ""}
+                    </p>
+                  </div>
+                </div>
+
+                {loadingAssignmentDetail ? (
+                  <p className="mt-4 text-sm text-slate-600">
+                    Loading assignment detail...
+                  </p>
+                ) : selectedAssignmentDetail.attempts.length === 0 ? (
+                  <p className="mt-4 text-sm text-slate-600">
+                    This assessment has not been submitted yet.
+                  </p>
+                ) : (
+                  <div className="mt-4 space-y-5">
+                    {selectedAssignmentDetail.attempts.map((attempt) => (
+                      (() => {
+                        const wrongResponses = attempt.responses.filter(
+                          (response) => response.is_correct === false
+                        );
+                        const hasWrongResponses = wrongResponses.length > 0;
+                        const showAll = showAllResponsesByAttempt[attempt.id] || !hasWrongResponses;
+                        const visibleResponses = showAll ? attempt.responses : wrongResponses;
+
+                        return (
+                          <div key={attempt.id} className="rounded-xl border">
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-slate-50 px-4 py-3">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">
+                                  Attempt {attempt.attempt_number}
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                  {attempt.submitted_at
+                                    ? new Date(attempt.submitted_at).toLocaleString()
+                                    : new Date(attempt.created_at).toLocaleString()}
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+                                <span>{formatScore(attempt.final_score, attempt.max_score)}</span>
+                                <span>
+                                  {attempt.percentage !== null
+                                    ? `${Math.round(attempt.percentage)}%`
+                                    : "—"}
+                                </span>
+                                <span
+                                  className={`rounded-full px-2 py-1 text-xs font-medium ${getAssignmentStatusClasses(
+                                    attempt.status
+                                  )}`}
+                                >
+                                  {getAssignmentStatusLabel(attempt.status)}
+                                </span>
+                              </div>
+                            </div>
+
+                            {attempt.responses.length === 0 ? (
+                              <p className="px-4 py-4 text-sm text-slate-600">
+                                No question review data is available for this attempt.
+                              </p>
+                            ) : (
+                              <>
+                                <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-white px-4 py-3">
+                                  <p className="text-sm text-slate-600">
+                                    {hasWrongResponses
+                                      ? `${wrongResponses.length} wrong out of ${attempt.responses.length} questions`
+                                      : `All ${attempt.responses.length} questions were correct`}
+                                  </p>
+                                  {hasWrongResponses && (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleAttemptResponses(attempt.id)}
+                                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                                    >
+                                      {showAll ? "Show wrong only" : "Show all questions"}
+                                    </button>
+                                  )}
+                                </div>
+                                <div className="overflow-x-auto">
+                                  <table className="min-w-full text-sm">
+                                    <thead className="bg-white text-left text-slate-600">
+                                      <tr>
+                                        <th className="px-4 py-3 font-medium">Q</th>
+                                        <th className="px-4 py-3 font-medium">Question</th>
+                                        <th className="px-4 py-3 font-medium">Selected answer</th>
+                                        <th className="px-4 py-3 font-medium">Correct answer</th>
+                                        <th className="px-4 py-3 font-medium">Result</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {visibleResponses.map((response) => (
+                                        <tr
+                                          key={`${attempt.id}-${response.assessment_item_id}`}
+                                          className="border-t align-top"
+                                        >
+                                          <td className="px-4 py-3 text-slate-500">
+                                            {response.item_order ?? "—"}
+                                          </td>
+                                          <td className="px-4 py-3">
+                                            <div className="font-medium text-slate-900">
+                                              {response.prompt ||
+                                                (response.word
+                                                  ? `What is the meaning of ${response.word}?`
+                                                  : "Question")}
+                                            </div>
+                                            {response.word && (
+                                              <div className="mt-1 text-xs text-slate-500">
+                                                Word: {response.word}
+                                              </div>
+                                            )}
+                                          </td>
+                                          <td className="px-4 py-3 text-slate-700">
+                                            {response.selected_answer || "No answer"}
+                                          </td>
+                                          <td className="px-4 py-3 text-slate-700">
+                                            {response.correct_answer || "—"}
+                                          </td>
+                                          <td className="px-4 py-3">
+                                            <span
+                                              className={`rounded-full px-2 py-1 text-xs font-medium ${
+                                                response.is_correct
+                                                  ? "bg-green-100 text-green-800"
+                                                  : "bg-red-100 text-red-700"
+                                              }`}
+                                            >
+                                              {response.is_correct ? "Correct" : "Wrong"}
+                                            </span>
+                                            {response.feedback && (
+                                              <p className="mt-2 max-w-xs text-xs text-slate-500">
+                                                {response.feedback}
+                                              </p>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })()
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : loadingAssignmentDetail ? (
+              <p className="text-sm text-slate-600">Loading assignment detail...</p>
+            ) : (
+              <p className="text-sm text-slate-600">
+                Choose an assigned assessment to inspect its attempt history.
+              </p>
             )}
           </div>
         )}
