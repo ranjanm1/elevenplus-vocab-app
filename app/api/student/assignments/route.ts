@@ -14,11 +14,18 @@ type AssignmentRow = {
   metadata: {
     word_count?: number;
   } | null;
-  assessment_definitions: Array<{
-    title: string;
-    description: string | null;
-    type: string;
-  }> | null;
+  assessment_definitions:
+    | {
+        title: string;
+        description: string | null;
+        type: string;
+      }
+    | Array<{
+        title: string;
+        description: string | null;
+        type: string;
+      }>
+    | null;
 };
 
 type AttemptSummaryRow = {
@@ -26,6 +33,15 @@ type AttemptSummaryRow = {
   created_at: string;
   percentage: number | null;
 };
+
+function getDefinition(
+  definition:
+    | AssignmentRow["assessment_definitions"]
+    | undefined
+) {
+  if (!definition) return null;
+  return Array.isArray(definition) ? definition[0] || null : definition;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -106,7 +122,7 @@ export async function GET(request: NextRequest) {
       },
       assignments: assignments.map((assignment) => {
         const attemptSummary = attemptsByAssignment.get(assignment.id);
-        const definition = assignment.assessment_definitions?.[0] || null;
+        const definition = getDefinition(assignment.assessment_definitions);
         return {
           id: assignment.id,
           assigned_at: assignment.assigned_at,

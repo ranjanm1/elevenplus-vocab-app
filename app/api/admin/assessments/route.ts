@@ -20,12 +20,28 @@ type AssessmentAssignmentRow = {
   status: string;
   student_id: string;
   assessment_definition_id: string;
-  assessment_definitions: Array<{
-    id: string;
-    title: string;
-    type: string;
-  }> | null;
+  assessment_definitions:
+    | {
+        id: string;
+        title: string;
+        type: string;
+      }
+    | Array<{
+        id: string;
+        title: string;
+        type: string;
+      }>
+    | null;
 };
+
+function getDefinition(
+  definition:
+    | AssessmentAssignmentRow["assessment_definitions"]
+    | undefined
+) {
+  if (!definition) return null;
+  return Array.isArray(definition) ? definition[0] || null : definition;
+}
 
 type StudentRow = {
   id: string;
@@ -112,7 +128,7 @@ export async function GET(request: NextRequest) {
       assignments: assignments.map((assignment) => {
         const student = studentMap.get(assignment.student_id);
         const parent = student ? profileMap.get(student.parent_user_id) : null;
-        const definition = assignment.assessment_definitions?.[0] || null;
+        const definition = getDefinition(assignment.assessment_definitions);
 
         return {
           id: assignment.id,

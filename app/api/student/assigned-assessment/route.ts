@@ -16,13 +16,22 @@ type AssignmentRow = {
   max_attempts: number | null;
   student_id: string;
   assessment_definition_id: string;
-  assessment_definitions: Array<{
-    id: string;
-    title: string;
-    description: string | null;
-    instructions: string | null;
-    type: string;
-  }> | null;
+  assessment_definitions:
+    | {
+        id: string;
+        title: string;
+        description: string | null;
+        instructions: string | null;
+        type: string;
+      }
+    | Array<{
+        id: string;
+        title: string;
+        description: string | null;
+        instructions: string | null;
+        type: string;
+      }>
+    | null;
 };
 
 type StudentRow = {
@@ -51,6 +60,15 @@ type SubmitRequestBody = {
   answers?: SubmitAnswer[];
   startedAt?: string | null;
 };
+
+function getDefinition(
+  definition:
+    | AssignmentRow["assessment_definitions"]
+    | undefined
+) {
+  if (!definition) return null;
+  return Array.isArray(definition) ? definition[0] || null : definition;
+}
 
 function isUnavailable(availableFrom: string | null, dueAt: string | null) {
   const now = Date.now();
@@ -223,14 +241,14 @@ export async function GET(request: NextRequest) {
       assignmentId,
       user.id
     );
+    const definition = getDefinition(assignment.assessment_definitions);
 
     return NextResponse.json({
       assignment: {
         id: assignment.id,
-        title:
-          assignment.assessment_definitions?.[0]?.title ?? "Assigned assessment",
-        description: assignment.assessment_definitions?.[0]?.description ?? null,
-        instructions: assignment.assessment_definitions?.[0]?.instructions ?? null,
+        title: definition?.title ?? "Assigned assessment",
+        description: definition?.description ?? null,
+        instructions: definition?.instructions ?? null,
         due_at: assignment.due_at,
         available_from: assignment.available_from,
         status: assignment.status,

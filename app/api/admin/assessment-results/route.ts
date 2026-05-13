@@ -11,12 +11,20 @@ type AssignmentRow = {
   status: string;
   student_id: string;
   assessment_definition_id: string;
-  assessment_definitions: Array<{
-    id: string;
-    title: string;
-    type: string;
-    description: string | null;
-  }> | null;
+  assessment_definitions:
+    | {
+        id: string;
+        title: string;
+        type: string;
+        description: string | null;
+      }
+    | Array<{
+        id: string;
+        title: string;
+        type: string;
+        description: string | null;
+      }>
+    | null;
 };
 
 type StudentRow = {
@@ -77,12 +85,22 @@ type VocabularyWordRow = {
   definition: string;
 };
 
+function getDefinition(
+  definition:
+    | AssignmentRow["assessment_definitions"]
+    | undefined
+) {
+  if (!definition) return null;
+  return Array.isArray(definition) ? definition[0] || null : definition;
+}
+
 function formatAssignmentSummary(
   assignment: AssignmentRow,
   student: StudentRow | undefined,
   parent: ProfileRow | undefined,
   attempts: AttemptRow[]
 ) {
+  const definition = getDefinition(assignment.assessment_definitions);
   const latestAttempt = attempts[0];
   const bestPercentage = attempts.reduce<number | null>((best, attempt) => {
     if (attempt.percentage === null) return best;
@@ -106,11 +124,9 @@ function formatAssignmentSummary(
     parent_name: parent?.full_name ?? null,
     parent_email: parent?.email ?? null,
     assessment_definition_id: assignment.assessment_definition_id,
-    assessment_title:
-      assignment.assessment_definitions?.[0]?.title ?? "Assigned assessment",
-    assessment_type: assignment.assessment_definitions?.[0]?.type ?? null,
-    assessment_description:
-      assignment.assessment_definitions?.[0]?.description ?? null,
+    assessment_title: definition?.title ?? "Assigned assessment",
+    assessment_type: definition?.type ?? null,
+    assessment_description: definition?.description ?? null,
     attempt_count: attempts.length,
     completed_attempt_count: completedAttempts,
     latest_attempt_at: latestAttempt?.submitted_at ?? latestAttempt?.created_at ?? null,
