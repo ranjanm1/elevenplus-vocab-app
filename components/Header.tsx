@@ -111,6 +111,14 @@ export default function Header() {
                   </Link>
 
                   <Link
+                    href="/admin/assessments"
+                    onClick={() => setAdminMenuOpen(false)}
+                    className="block px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+                  >
+                    Assign Assessments
+                  </Link>
+
+                  <Link
                     href="/admin/upload"
                     onClick={() => setAdminMenuOpen(false)}
                     className="block px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"

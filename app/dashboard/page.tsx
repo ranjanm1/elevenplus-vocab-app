@@ -18,13 +18,38 @@ type StudentRow = {
   full_name: string | null;
 };
 
+type AssignedAssessment = {
+  id: string;
+  assigned_at: string;
+  available_from: string | null;
+  due_at: string | null;
+  status: string;
+  max_attempts: number | null;
+  word_count: number | null;
+  assessment_title: string;
+  assessment_description: string | null;
+  assessment_type: string | null;
+  attempt_count: number;
+  latest_percentage: number | null;
+  latest_attempt_at: string | null;
+};
+
+function getAssignmentStatusLabel(assignment: AssignedAssessment) {
+  if (assignment.attempt_count > 0) return "Completed";
+  if (assignment.due_at && new Date(assignment.due_at).getTime() < Date.now()) {
+    return "Overdue";
+  }
+  return "Assigned";
+}
+
 export default function DashboardPage() {
-  const { user, authLoading } = useAuth();
+  const { user, session, authLoading } = useAuth();
 
   const [latestResult, setLatestResult] = useState<QuizResult | null>(null);
   const [quizCount, setQuizCount] = useState(0);
   const [bestScore, setBestScore] = useState<number | null>(null);
   const [studentName, setStudentName] = useState("");
+  const [assignedAssessments, setAssignedAssessments] = useState<AssignedAssessment[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -32,7 +57,8 @@ export default function DashboardPage() {
     if (user) {
       loadResults();
     }
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, session]);
 
   async function loadResults() {
     if (!user) return;
@@ -64,6 +90,28 @@ export default function DashboardPage() {
       } else if (studentError) {
         // Keep dashboard working even if students table is not set up yet.
         setStudentName("");
+      }
+
+      if (session?.access_token) {
+        const assignmentResponse = await fetch("/api/student/assignments", {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
+        const assignmentPayload = (await assignmentResponse.json()) as {
+          assignments?: AssignedAssessment[];
+          error?: string;
+        };
+
+        if (!assignmentResponse.ok) {
+          throw new Error(
+            assignmentPayload.error || "Failed to load assigned assessments."
+          );
+        }
+
+        setAssignedAssessments(assignmentPayload.assignments || []);
+      } else {
+        setAssignedAssessments([]);
       }
 
       const rows = (results as QuizResult[]) || [];
@@ -196,6 +244,82 @@ export default function DashboardPage() {
             <p className="mt-2 text-sm text-slate-600">
               Signed in as: {user.email}
             </p>
+          </div>
+        </div>
+
+        <div className="mt-8 rounded-xl border bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">
+                Assigned assessments
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Complete teacher-assigned vocabulary work from here.
+              </p>
+            </div>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+              {assignedAssessments.length} assigned
+            </span>
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {assignedAssessments.length === 0 ? (
+              <p className="text-sm text-slate-600">
+                No assigned assessments yet. Any new assigned work will appear here.
+              </p>
+            ) : (
+              assignedAssessments.map((assignment) => (
+                <div
+                  key={assignment.id}
+                  className="rounded-xl border border-slate-200 p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">
+                        {assignment.assessment_title}
+                      </h3>
+                      {assignment.assessment_description && (
+                        <p className="mt-1 text-sm text-slate-600">
+                          {assignment.assessment_description}
+                        </p>
+                      )}
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                      {getAssignmentStatusLabel(assignment)}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+                    {assignment.word_count !== null && (
+                      <span>{assignment.word_count} words</span>
+                    )}
+                      {assignment.max_attempts !== null && (
+                        <span>
+                          {assignment.attempt_count}/{assignment.max_attempts} attempts used
+                        </span>
+                      )}
+                    {assignment.due_at && (
+                      <span>
+                        Due {new Date(assignment.due_at).toLocaleDateString()}
+                      </span>
+                    )}
+                    {assignment.latest_percentage !== null && (
+                      <span>Latest score: {assignment.latest_percentage}%</span>
+                    )}
+                    </div>
+                    <Link
+                      href={`/quiz?assignment=${assignment.id}`}
+                      className="rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+                    >
+                      {assignment.attempt_count > 0
+                        ? "Open completed assessment"
+                        : "Start assigned assessment"}
+                    </Link>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 

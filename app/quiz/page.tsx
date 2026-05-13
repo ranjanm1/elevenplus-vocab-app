@@ -1,61 +1,99 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import {
+  buildDefinitionMatchQuestions,
+  type AssessmentQuizQuestion,
+  type QuizWord,
+} from "@/lib/assessment-quiz";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/components/AuthProvider";
-
-type QuizWord = {
-  id: string;
-  word: string;
-  definition: string;
-};
-
-type QuizQuestion = {
-  id: string;
-  word: string;
-  correctAnswer: string;
-  options: string[];
-};
 
 type StudentRow = {
   id: string;
   full_name: string | null;
 };
 
+type AssignedAssessmentInfo = {
+  id: string;
+  title: string;
+  description: string | null;
+  instructions: string | null;
+  due_at: string | null;
+  available_from: string | null;
+  status: string;
+  max_attempts: number | null;
+};
+
+type SubmittedAnswer = {
+  itemId: string;
+  wordId: string;
+  selectedAnswer: string;
+};
+
 const QUIZ_SIZE = 10;
 const WORD_POOL_SIZE = 80;
 
-function shuffleArray<T>(items: T[]): T[] {
-  const array = [...items];
-  for (let i = array.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-  return array;
+export default function QuizPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-slate-50">
+          <section className="mx-auto max-w-4xl px-6 py-10">
+            <p className="text-slate-600">Loading quiz...</p>
+          </section>
+        </main>
+      }
+    >
+      <QuizPageContent />
+    </Suspense>
+  );
 }
 
-export default function QuizPage() {
-  const { user, authLoading } = useAuth();
+function QuizPageContent() {
+  const searchParams = useSearchParams();
+  const assignmentId = searchParams.get("assignment")?.trim() || "";
+  const { user, session, authLoading } = useAuth();
 
   const [loadingQuiz, setLoadingQuiz] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [questions, setQuestions] = useState<AssessmentQuizQuestion[]>([]);
+  const [assignmentInfo, setAssignmentInfo] = useState<AssignedAssessmentInfo | null>(null);
 
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submittedAnswers, setSubmittedAnswers] = useState<SubmittedAnswer[]>([]);
   const [score, setScore] = useState(0);
   const [quizFinished, setQuizFinished] = useState(false);
   const [savingResult, setSavingResult] = useState(false);
   const [studentName, setStudentName] = useState("");
+  const [startedAt, setStartedAt] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user) {
-      loadQuizQuestions();
-      loadStudentName();
+    if (!user) return;
+
+    if (assignmentId) {
+      void loadAssignedQuiz(assignmentId);
+      return;
     }
-  }, [user]);
+
+    void loadPracticeQuiz();
+    void loadStudentName();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignmentId, session, user]);
+
+  function resetQuizState() {
+    setCurrentQuestionIndex(0);
+    setSelectedAnswer("");
+    setSubmitted(false);
+    setSubmittedAnswers([]);
+    setScore(0);
+    setQuizFinished(false);
+    setStartedAt(new Date().toISOString());
+  }
 
   async function loadStudentName() {
     if (!user) return;
@@ -75,9 +113,10 @@ export default function QuizPage() {
     setStudentName((data as StudentRow).full_name || "");
   }
 
-  async function loadQuizQuestions() {
+  async function loadPracticeQuiz() {
     setLoadingQuiz(true);
     setErrorMessage("");
+    setAssignmentInfo(null);
 
     try {
       const { data, error } = await supabase
@@ -91,7 +130,7 @@ export default function QuizPage() {
         throw new Error(error.message);
       }
 
-      const pool = shuffleArray((data as QuizWord[]) || []).filter(
+      const pool = ((data as QuizWord[]) || []).filter(
         (item) => item.word && item.definition
       );
 
@@ -99,35 +138,12 @@ export default function QuizPage() {
         throw new Error("Not enough words available to generate a quiz.");
       }
 
-      const selectedWords = pool.slice(0, QUIZ_SIZE);
+      const selectedWords = pool
+        .sort(() => Math.random() - 0.5)
+        .slice(0, QUIZ_SIZE);
 
-      const generatedQuestions = selectedWords.map((item) => {
-        const distractors = shuffleArray(
-          pool
-            .filter((candidate) => candidate.id !== item.id)
-            .map((candidate) => candidate.definition)
-            .filter(
-              (definition, index, arr) =>
-                Boolean(definition) &&
-                definition !== item.definition &&
-                arr.indexOf(definition) === index
-            )
-        ).slice(0, 3);
-
-        return {
-          id: item.id,
-          word: item.word,
-          correctAnswer: item.definition,
-          options: shuffleArray([item.definition, ...distractors]),
-        };
-      });
-
-      setQuestions(generatedQuestions);
-      setCurrentQuestionIndex(0);
-      setSelectedAnswer("");
-      setSubmitted(false);
-      setScore(0);
-      setQuizFinished(false);
+      setQuestions(buildDefinitionMatchQuestions(selectedWords, pool));
+      resetQuizState();
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to load quiz."
@@ -138,31 +154,100 @@ export default function QuizPage() {
     }
   }
 
-  async function saveQuizResult(finalScore: number) {
-    if (!user) return;
+  async function loadAssignedQuiz(targetAssignmentId: string) {
+    if (!session?.access_token) {
+      setErrorMessage("Your session expired. Please log in again.");
+      return;
+    }
 
-    setSavingResult(true);
+    setLoadingQuiz(true);
+    setErrorMessage("");
 
     try {
-      const percentage = Math.round((finalScore / questions.length) * 100);
+      const response = await fetch(
+        `/api/student/assigned-assessment?assignmentId=${encodeURIComponent(
+          targetAssignmentId
+        )}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        }
+      );
 
-      const { error } = await supabase.from("quiz_results").insert({
-        user_id: user.id,
-        score: finalScore,
-        total_questions: questions.length,
-        percentage,
-      });
+      const payload = (await response.json()) as {
+        assignment?: AssignedAssessmentInfo;
+        student?: StudentRow;
+        questions?: AssessmentQuizQuestion[];
+        error?: string;
+      };
 
-      if (error) {
-        throw new Error(error.message);
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to load assigned assessment.");
       }
+
+      setAssignmentInfo(payload.assignment || null);
+      setStudentName(payload.student?.full_name || "");
+      setQuestions(payload.questions || []);
+      resetQuizState();
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "Failed to save quiz result."
+        error instanceof Error ? error.message : "Failed to load assigned assessment."
       );
+      setQuestions([]);
     } finally {
-      setSavingResult(false);
+      setLoadingQuiz(false);
     }
+  }
+
+  async function savePracticeQuizResult(finalScore: number) {
+    if (!user) return;
+
+    const percentage = Math.round((finalScore / questions.length) * 100);
+    const { error } = await supabase.from("quiz_results").insert({
+      user_id: user.id,
+      score: finalScore,
+      total_questions: questions.length,
+      percentage,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  async function saveAssignedQuizResult(finalAnswers: SubmittedAnswer[]) {
+    if (!session?.access_token || !assignmentId) {
+      throw new Error("Assigned quiz submission is unavailable.");
+    }
+
+    const response = await fetch("/api/student/assigned-assessment", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        assignmentId,
+        answers: finalAnswers,
+        startedAt,
+      }),
+    });
+
+    const payload = (await response.json()) as {
+      result?: {
+        score: number;
+        total_questions: number;
+        percentage: number;
+      };
+      error?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to save assigned assessment.");
+    }
+
+    return payload.result || null;
   }
 
   function handleSubmitAnswer() {
@@ -175,25 +260,55 @@ export default function QuizPage() {
     if (!currentQuestion) return;
 
     const isCorrect = selectedAnswer === currentQuestion.correctAnswer;
-    const newScore = isCorrect ? score + 1 : score;
+    const nextScore = isCorrect ? score + 1 : score;
+    const nextAnswers = [
+      ...submittedAnswers,
+      {
+        itemId: currentQuestion.itemId,
+        wordId: currentQuestion.wordId,
+        selectedAnswer,
+      },
+    ];
 
     if (isCorrect) {
-      setScore(newScore);
+      setScore(nextScore);
     }
 
     if (currentQuestionIndex === questions.length - 1) {
       setQuizFinished(true);
-      await saveQuizResult(newScore);
+      setSubmittedAnswers(nextAnswers);
+      setSavingResult(true);
+
+      try {
+        if (assignmentId) {
+          await saveAssignedQuizResult(nextAnswers);
+        } else {
+          await savePracticeQuizResult(nextScore);
+        }
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to save quiz result."
+        );
+      } finally {
+        setSavingResult(false);
+      }
+
       return;
     }
 
+    setSubmittedAnswers(nextAnswers);
     setCurrentQuestionIndex((prev) => prev + 1);
     setSelectedAnswer("");
     setSubmitted(false);
   }
 
   async function handleRestartQuiz() {
-    await loadQuizQuestions();
+    if (assignmentId) {
+      await loadAssignedQuiz(assignmentId);
+      return;
+    }
+
+    await loadPracticeQuiz();
   }
 
   if (authLoading) {
@@ -246,13 +361,21 @@ export default function QuizPage() {
           <div className="rounded-2xl border bg-white p-8 shadow-sm">
             <h1 className="text-2xl font-bold text-slate-900">Quiz unavailable</h1>
             <p className="mt-3 text-slate-600">{errorMessage}</p>
-            <button
-              type="button"
-              onClick={handleRestartQuiz}
-              className="mt-6 rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
-            >
-              Try again
-            </button>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={handleRestartQuiz}
+                className="rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
+              >
+                Try again
+              </button>
+              <Link
+                href="/dashboard"
+                className="rounded-lg border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Back to dashboard
+              </Link>
+            </div>
           </div>
         </section>
       </main>
@@ -264,7 +387,9 @@ export default function QuizPage() {
       <main className="min-h-screen bg-slate-50">
         <section className="mx-auto max-w-3xl px-6 py-10">
           <div className="rounded-2xl border bg-white p-8 text-center shadow-sm">
-            <h1 className="text-3xl font-bold text-slate-900">Quiz complete</h1>
+            <h1 className="text-3xl font-bold text-slate-900">
+              {assignmentId ? "Assessment complete" : "Quiz complete"}
+            </h1>
             <p className="mt-4 text-lg text-slate-700">
               You scored {score} out of {questions.length}
             </p>
@@ -288,7 +413,7 @@ export default function QuizPage() {
                 onClick={handleRestartQuiz}
                 className="rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
               >
-                Restart quiz
+                {assignmentId ? "Retry assigned quiz" : "Restart quiz"}
               </button>
 
               <Link
@@ -329,16 +454,23 @@ export default function QuizPage() {
   }
 
   const isCorrect = selectedAnswer === currentQuestion.correctAnswer;
+  const title = assignmentInfo?.title || "Vocabulary Quiz";
+  const subtitle = assignmentInfo?.instructions || "What is the meaning of this word?";
 
   return (
     <main className="min-h-screen bg-slate-50">
       <section className="mx-auto max-w-4xl px-6 py-10">
         <div className="rounded-2xl border bg-white p-8 shadow-sm">
-          <div className="mb-6 flex items-center justify-between">
+          <div className="mb-6 flex items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Vocabulary Quiz</h1>
+              <h1 className="text-2xl font-bold text-slate-900">{title}</h1>
               {studentName && (
                 <p className="mt-1 text-sm text-slate-600">Student: {studentName}</p>
+              )}
+              {assignmentInfo?.due_at && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Due: {new Date(assignmentInfo.due_at).toLocaleString()}
+                </p>
               )}
             </div>
             <p className="text-sm text-slate-600">
@@ -346,6 +478,26 @@ export default function QuizPage() {
             </p>
           </div>
 
+          {assignmentInfo && (
+            <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                <span className="rounded-full bg-white px-2.5 py-1 font-medium text-slate-700">
+                  Assigned assessment
+                </span>
+                {assignmentInfo.max_attempts !== null && (
+                  <span>Max attempts: {assignmentInfo.max_attempts}</span>
+                )}
+                {assignmentInfo.status && <span>Status: {assignmentInfo.status}</span>}
+              </div>
+              {assignmentInfo.description && (
+                <p className="mt-3 text-sm text-slate-600">
+                  {assignmentInfo.description}
+                </p>
+              )}
+            </div>
+          )}
+
+          <p className="mb-2 text-sm text-slate-500">{subtitle}</p>
           <p className="mb-6 text-lg text-slate-700">
             What is the meaning of{" "}
             <span className="font-bold text-slate-900">{currentQuestion.word}</span>?
@@ -415,7 +567,9 @@ export default function QuizPage() {
                 className="rounded-lg bg-green-700 px-5 py-3 text-sm font-medium text-white hover:bg-green-800"
               >
                 {currentQuestionIndex === questions.length - 1
-                  ? "Finish quiz"
+                  ? assignmentId
+                    ? "Finish assessment"
+                    : "Finish quiz"
                   : "Next question"}
               </button>
             </div>

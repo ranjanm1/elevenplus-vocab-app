@@ -17,6 +17,7 @@ export default function AdminPage() {
     } else if (!authLoading) {
       setIsAdmin(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, authLoading]);
 
   async function loadRole() {
@@ -131,7 +132,19 @@ export default function AdminPage() {
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <Link
+            href="/admin/assessments"
+            className="rounded-xl border bg-white p-6 shadow-sm transition hover:shadow-md"
+          >
+            <h2 className="text-lg font-semibold text-slate-900">
+              Assign Assessments
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Build a fixed-word vocabulary quiz and assign it to a student.
+            </p>
+          </Link>
+
           <Link
             href="/admin/upload"
             className="rounded-xl border bg-white p-6 shadow-sm transition hover:shadow-md"
