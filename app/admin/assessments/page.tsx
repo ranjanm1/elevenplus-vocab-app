@@ -16,6 +16,8 @@ type VocabularyWord = {
   id: string;
   word: string;
   definition: string;
+  difficulty: string | null;
+  topic: string | null;
 };
 
 type RecentAssignment = {
@@ -26,6 +28,17 @@ type RecentAssignment = {
   student_name: string | null;
   parent_email: string | null;
   assessment_title: string;
+};
+
+type WordSearchResponse = {
+  words?: VocabularyWord[];
+  total?: number;
+  has_more?: boolean;
+  filters?: {
+    difficulties?: string[];
+    topics?: string[];
+  };
+  error?: string;
 };
 
 function toIsoOrNull(value: string) {
@@ -50,9 +63,13 @@ export default function AdminAssessmentsPage() {
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const [words, setWords] = useState<VocabularyWord[]>([]);
+  const [availableWords, setAvailableWords] = useState<VocabularyWord[]>([]);
   const [students, setStudents] = useState<AdminStudent[]>([]);
   const [recentAssignments, setRecentAssignments] = useState<RecentAssignment[]>([]);
+  const [difficultyOptions, setDifficultyOptions] = useState<string[]>([]);
+  const [topicOptions, setTopicOptions] = useState<string[]>([]);
+  const [wordTotal, setWordTotal] = useState(0);
+  const [hasMoreWords, setHasMoreWords] = useState(false);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -63,7 +80,11 @@ export default function AdminAssessmentsPage() {
   const [dueAt, setDueAt] = useState("");
   const [maxAttempts, setMaxAttempts] = useState("1");
   const [wordSearch, setWordSearch] = useState("");
+  const [wordDifficulty, setWordDifficulty] = useState("all");
+  const [wordTopic, setWordTopic] = useState("all");
+  const [wordPage, setWordPage] = useState(1);
   const [selectedWordIds, setSelectedWordIds] = useState<string[]>([]);
+  const [selectedWordMap, setSelectedWordMap] = useState<Record<string, VocabularyWord>>({});
 
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -79,11 +100,21 @@ export default function AdminAssessmentsPage() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    void loadWords();
     void loadStudents();
     void loadAssignments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    const timeoutId = window.setTimeout(() => {
+      void loadWords(1, false);
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, session?.access_token, wordSearch, wordDifficulty, wordTopic]);
 
   async function loadRole() {
     if (!user) return;
@@ -113,23 +144,47 @@ export default function AdminAssessmentsPage() {
     }
   }
 
-  async function loadWords() {
+  async function loadWords(targetPage: number, append: boolean) {
+    if (!session?.access_token) return;
+
     setLoadingWords(true);
 
     try {
-      const { data, error } = await supabase
-        .from("vocabulary_words")
-        .select("id, word, definition")
-        .eq("active", true)
-        .eq("premium_only", false)
-        .order("word", { ascending: true })
-        .limit(300);
+      const params = new URLSearchParams({
+        page: String(targetPage),
+        search: wordSearch,
+        difficulty: wordDifficulty,
+        topic: wordTopic,
+      });
 
-      if (error) {
-        throw new Error(error.message);
+      const response = await fetch(`/api/admin/assessment-words?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      const payload = (await response.json()) as WordSearchResponse;
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to load vocabulary words.");
       }
 
-      setWords((data as VocabularyWord[]) || []);
+      const nextWords = payload.words || [];
+      setAvailableWords((current) =>
+        append
+          ? [
+              ...current,
+              ...nextWords.filter(
+                (nextWord) => !current.some((word) => word.id === nextWord.id)
+              ),
+            ]
+          : nextWords
+      );
+      setDifficultyOptions(payload.filters?.difficulties || []);
+      setTopicOptions(payload.filters?.topics || []);
+      setWordTotal(payload.total || 0);
+      setHasMoreWords(Boolean(payload.has_more));
+      setWordPage(targetPage);
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to load vocabulary words."
@@ -202,11 +257,33 @@ export default function AdminAssessmentsPage() {
   }
 
   function toggleWord(wordId: string) {
-    setSelectedWordIds((current) =>
-      current.includes(wordId)
-        ? current.filter((id) => id !== wordId)
-        : [...current, wordId]
-    );
+    const word = availableWords.find((item) => item.id === wordId);
+
+    setSelectedWordIds((current) => {
+      if (current.includes(wordId)) {
+        return current.filter((id) => id !== wordId);
+      }
+
+      return [...current, wordId];
+    });
+
+    setSelectedWordMap((current) => {
+      if (current[wordId]) {
+        const next = { ...current };
+        delete next[wordId];
+        return next;
+      }
+
+      if (!word) return current;
+      return {
+        ...current,
+        [wordId]: word,
+      };
+    });
+  }
+
+  async function handleLoadMoreWords() {
+    await loadWords(wordPage + 1, true);
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -264,7 +341,10 @@ export default function AdminAssessmentsPage() {
       setDueAt("");
       setMaxAttempts("1");
       setSelectedWordIds([]);
+      setSelectedWordMap({});
       setWordSearch("");
+      setWordDifficulty("all");
+      setWordTopic("all");
       await loadAssignments();
     } catch (error) {
       setErrorMessage(
@@ -278,9 +358,9 @@ export default function AdminAssessmentsPage() {
   const selectedWords = useMemo(
     () =>
       selectedWordIds
-        .map((wordId) => words.find((word) => word.id === wordId))
+        .map((wordId) => selectedWordMap[wordId])
         .filter(Boolean) as VocabularyWord[],
-    [selectedWordIds, words]
+    [selectedWordIds, selectedWordMap]
   );
 
   const selectedStudent = useMemo(
@@ -288,22 +368,10 @@ export default function AdminAssessmentsPage() {
     [studentId, students]
   );
 
-  const filteredWords = useMemo(() => {
-    const query = wordSearch.trim().toLowerCase();
-    const unselectedWords = words.filter((word) => !selectedWordIds.includes(word.id));
-
-    if (!query) {
-      return unselectedWords.slice(0, 80);
-    }
-
-    return unselectedWords
-      .filter(
-        (word) =>
-          word.word.toLowerCase().includes(query) ||
-          word.definition.toLowerCase().includes(query)
-      )
-      .slice(0, 80);
-  }, [selectedWordIds, wordSearch, words]);
+  const filteredWords = useMemo(
+    () => availableWords.filter((word) => !selectedWordIds.includes(word.id)),
+    [availableWords, selectedWordIds]
+  );
 
   if (authLoading || loadingRole) {
     return (
@@ -532,23 +600,100 @@ export default function AdminAssessmentsPage() {
                   className="mt-4 w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
                 />
 
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <select
+                    value={wordDifficulty}
+                    onChange={(event) => setWordDifficulty(event.target.value)}
+                    className="rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
+                  >
+                    <option value="all">All difficulties</option>
+                    {difficultyOptions.map((difficulty) => (
+                      <option key={difficulty} value={difficulty}>
+                        {difficulty}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={wordTopic}
+                    onChange={(event) => setWordTopic(event.target.value)}
+                    className="rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-200"
+                  >
+                    <option value="all">All topics</option>
+                    {topicOptions.map((topic) => (
+                      <option key={topic} value={topic}>
+                        {topic}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  <p>
+                    {wordTotal > 0
+                      ? `Showing ${filteredWords.length} of ${wordTotal} matching words`
+                      : "No matching words found yet"}
+                  </p>
+                  {(wordSearch || wordDifficulty !== "all" || wordTopic !== "all") && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWordSearch("");
+                        setWordDifficulty("all");
+                        setWordTopic("all");
+                      }}
+                      className="text-xs font-medium text-green-800 hover:text-green-900"
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+
                 <div className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-1">
                   {loadingWords ? (
-                    <p className="text-sm text-slate-500">Loading words...</p>
+                    <p className="text-sm text-slate-500">Searching full vocabulary library...</p>
                   ) : filteredWords.length === 0 ? (
                     <p className="text-sm text-slate-500">No matching words found.</p>
                   ) : (
-                    filteredWords.map((word) => (
-                      <button
-                        key={word.id}
-                        type="button"
-                        onClick={() => toggleWord(word.id)}
-                        className="w-full rounded-lg border border-slate-200 px-4 py-3 text-left hover:border-green-300 hover:bg-green-50"
-                      >
-                        <p className="font-medium text-slate-900">{word.word}</p>
-                        <p className="mt-1 text-sm text-slate-600">{word.definition}</p>
-                      </button>
-                    ))
+                    <>
+                      {filteredWords.map((word) => (
+                        <button
+                          key={word.id}
+                          type="button"
+                          onClick={() => toggleWord(word.id)}
+                          className="w-full rounded-lg border border-slate-200 px-4 py-3 text-left hover:border-green-300 hover:bg-green-50"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-slate-900">{word.word}</p>
+                              <p className="mt-1 text-sm text-slate-600">{word.definition}</p>
+                            </div>
+                            <div className="flex flex-wrap justify-end gap-2 text-[11px]">
+                              {word.difficulty && (
+                                <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                                  {word.difficulty}
+                                </span>
+                              )}
+                              {word.topic && (
+                                <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                                  {word.topic}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+
+                      {hasMoreWords && (
+                        <button
+                          type="button"
+                          onClick={() => void handleLoadMoreWords()}
+                          className="w-full rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 hover:border-green-300 hover:bg-green-50"
+                        >
+                          Load more words
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
