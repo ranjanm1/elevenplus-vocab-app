@@ -132,7 +132,7 @@ export default function AdminPage() {
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <Link
             href="/admin/assessments"
             className="rounded-xl border bg-white p-6 shadow-sm transition hover:shadow-md"
@@ -190,6 +190,18 @@ export default function AdminPage() {
             </h2>
             <p className="mt-2 text-sm text-slate-600">
               Review learner performance, trends, and risk status.
+            </p>
+          </Link>
+
+          <Link
+            href="/admin/help"
+            className="rounded-xl border bg-white p-6 shadow-sm transition hover:shadow-md"
+          >
+            <h2 className="text-lg font-semibold text-slate-900">
+              Admin Help
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Read feature instructions, workflows, and FAQ answers for the admin area.
             </p>
           </Link>
         </div>

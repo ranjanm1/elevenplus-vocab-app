@@ -119,11 +119,27 @@ export default function Header() {
                   </Link>
 
                   <Link
+                    href="/admin/results"
+                    onClick={() => setAdminMenuOpen(false)}
+                    className="block px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+                  >
+                    Student Progress
+                  </Link>
+
+                  <Link
                     href="/admin/upload"
                     onClick={() => setAdminMenuOpen(false)}
                     className="block px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
                   >
                     Upload Words
+                  </Link>
+
+                  <Link
+                    href="/admin/help"
+                    onClick={() => setAdminMenuOpen(false)}
+                    className="block px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+                  >
+                    Admin Help
                   </Link>
                 </div>
               )}
