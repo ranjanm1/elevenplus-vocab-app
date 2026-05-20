@@ -1,159 +1,194 @@
+import Image from "next/image";
 import Link from "next/link";
-import { supabase } from "../lib/supabase";
 
-export default async function Home() {
-  const { data: dailyWord, error: dailyWordError } = await supabase
-    .from("vocabulary_words")
-    .select(
-      "id, word, slug, definition, difficulty, example_sentence, topic, premium_only"
-    )
-    .eq("word_of_the_day", true)
-    .eq("active", true)
-    .maybeSingle();
+const featureColumns = [
+  {
+    title: "What is the quiz platform?",
+    text: "A simple student login area for vocabulary practice, assigned assessments, and steady revision between lessons.",
+  },
+  {
+    title: "Why does it help?",
+    text: "Children get short, repeatable practice that supports tuition sessions and helps parents keep learning momentum at home.",
+  },
+  {
+    title: "How does it fit in?",
+    text: "The quiz sits inside the wider 11+ Succeed approach, alongside tuition, mock exam preparation, and vocabulary development.",
+  },
+];
 
-  const { data: words, error: wordsError } = await supabase
-    .from("vocabulary_words")
-    .select(
-      "id, word, slug, definition, difficulty, example_sentence, topic, premium_only"
-    )
-    .eq("active", true)
-    .order("word", { ascending: true })
-    .limit(20);
+const trustPoints = [
+  "5+ years of trust",
+  "Tailored stress free learning",
+  "Focus on fundamentals",
+];
 
-  const errorMessage = dailyWordError?.message || wordsError?.message;
+const serviceLinks = [
+  "Face-to-face tuition",
+  "Mock exams",
+  "Vocabulary quiz platform",
+  "Tips and tricks",
+];
 
+const aboutLinks = [
+  "Who we are",
+  "Testimonials",
+  "Our methodology",
+  "Results",
+];
+
+export default function Home() {
   return (
-    <main className="min-h-screen bg-slate-50">
-      <section className="mx-auto max-w-5xl px-6 py-10">
-        {dailyWord && (
-          <div className="mb-8 rounded-2xl border border-green-200 bg-green-50 p-6 shadow-sm">
-            <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-green-700">
-              Word of the Day
-            </div>
+    <main className="bg-white">
+      <section className="border-b border-[color:var(--line)] bg-white">
+        <div className="mx-auto grid max-w-[1900px] lg:grid-cols-2">
+          <div className="relative overflow-hidden bg-[color:var(--brand-sky)] px-8 py-16 text-white md:px-14 lg:min-h-[470px] lg:py-20">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.18),_transparent_30%),linear-gradient(135deg,_rgba(255,255,255,0.16),_rgba(18,66,123,0.22))]" />
+            <div className="absolute inset-0 opacity-15 [background-image:linear-gradient(rgba(255,255,255,0.28)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.28)_1px,transparent_1px)] [background-size:32px_32px]" />
 
-            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-              <div>
-                <h2 className="text-3xl font-bold text-green-950">
-                  {dailyWord.word}
-                </h2>
+            <div className="relative z-10 mx-auto max-w-md lg:ml-auto lg:mr-12 lg:pt-6">
+              <h1 className="text-4xl font-extrabold leading-tight text-white md:text-5xl">
+                11+ vocabulary and mock exam practice
+              </h1>
 
-                <p className="mt-3 text-base text-slate-700">
-                  {dailyWord.definition}
-                </p>
+              <p className="mt-6 text-2xl font-extrabold">
+                New student platform now live
+              </p>
 
-                {dailyWord.example_sentence && (
-                  <p className="mt-3 text-sm text-slate-600">
-                    Example: {dailyWord.example_sentence}
-                  </p>
-                )}
+              <p className="mt-4 text-lg leading-8 text-blue-50">
+                Access the quiz, revise key vocabulary, and continue the wider
+                11+ Succeed journey through one clear homepage.
+              </p>
 
-                <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-600">
-                  {dailyWord.difficulty && (
-                    <span className="rounded bg-white px-2 py-1">
-                      Difficulty: {dailyWord.difficulty}
-                    </span>
-                  )}
+              <p className="mt-4 text-base leading-7 text-blue-50">
+                This Vercel version is designed to sit above the existing quiz
+                deployment so families land on a proper centre homepage first.
+              </p>
 
-                  {dailyWord.topic && (
-                    <span className="rounded bg-white px-2 py-1">
-                      Topic: {dailyWord.topic}
-                    </span>
-                  )}
-
-                  {dailyWord.premium_only && (
-                    <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">
-                      Premium
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="shrink-0">
+              <div className="mt-8 flex flex-col gap-4 sm:flex-row">
                 <Link
-                  href={`/words/${dailyWord.slug}`}
-                  className="inline-block rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+                  href="/quiz"
+                  className="inline-flex items-center justify-center rounded-full bg-white px-8 py-3 text-sm font-bold text-[color:var(--brand-navy)] shadow-sm transition hover:bg-slate-100"
                 >
-                  Learn this word
+                  Open Quiz
+                </Link>
+                <Link
+                  href="/login"
+                  className="inline-flex items-center justify-center rounded-full border border-white/70 px-8 py-3 text-sm font-bold text-white transition hover:bg-white/10"
+                >
+                  Student Login
                 </Link>
               </div>
+
+              <div className="mt-10 w-full max-w-[270px] rounded-md border border-white/40 bg-white/85 p-3 text-[color:var(--brand-navy)] shadow-sm">
+                <div className="mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide">
+                  <span>Platform route</span>
+                  <span>Live</span>
+                </div>
+                <div className="rounded bg-slate-100 px-3 py-4 text-sm font-semibold">
+                  Homepage at `/`
+                </div>
+                <div className="mt-2 rounded bg-slate-100 px-3 py-4 text-sm font-semibold">
+                  Quiz stays at `/quiz`
+                </div>
+              </div>
             </div>
           </div>
-        )}
 
-        <div className="mb-8 rounded-xl border bg-white p-6 shadow-sm">
-          <h2 className="mb-2 text-xl font-semibold text-slate-900">
-            Welcome to Eleven Plus Succeed Vocabulary
-          </h2>
-          <p className="text-slate-600">
-            Build vocabulary, practise regularly, and track progress with
-            child-friendly learning designed for 11+ preparation.
-          </p>
+          <div className="relative min-h-[360px] overflow-hidden lg:min-h-[470px]">
+            <Image
+              src="/home-hero-classroom.svg"
+              alt="Classroom-style illustration for the 11+ Succeed homepage"
+              fill
+              priority
+              className="object-cover"
+            />
+            <div className="absolute inset-0 bg-[linear-gradient(180deg,_rgba(0,0,0,0.02),_rgba(0,0,0,0.18))]" />
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 rounded-full bg-white/92 px-6 py-3 text-sm font-bold text-[color:var(--brand-navy)] shadow-lg">
+              Home for tuition and quiz access
+            </div>
+          </div>
         </div>
+      </section>
 
-        <div className="mb-6 flex items-end justify-between gap-4">
+      <section className="bg-white py-6">
+        <div className="mx-auto grid max-w-7xl gap-8 px-6 text-center md:grid-cols-3 md:px-8">
+          {featureColumns.map((item) => (
+            <div key={item.title} className="mx-auto max-w-sm">
+              <h2 className="text-sm font-extrabold text-slate-900">
+                {item.title}
+              </h2>
+              <p className="mt-3 text-xs leading-6 text-slate-600 sm:text-sm">
+                {item.text}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="bg-[color:var(--brand-red)] py-8 text-white">
+        <div className="mx-auto grid max-w-6xl gap-6 px-6 text-center md:grid-cols-3 md:px-8">
+          {trustPoints.map((point) => (
+            <div key={point} className="flex flex-col items-center">
+              <div className="mb-3 h-4 w-4 rounded-full border border-white/80" />
+              <p className="text-xs font-extrabold uppercase tracking-[0.18em] md:text-sm">
+                {point}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section
+        id="services"
+        className="bg-[color:var(--brand-cream)] py-10 text-slate-700"
+      >
+        <div className="mx-auto grid max-w-7xl gap-10 px-6 md:grid-cols-[1.1fr_1fr_1fr_1fr] md:px-8">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">
-              Vocabulary Preview
-            </h3>
-            <p className="text-sm text-slate-600">
-              Showing a sample of words from your vocabulary bank.
-            </p>
+            <div className="inline-block border-b-2 border-[color:var(--brand-sky)] pb-1 text-4xl font-extrabold tracking-[-0.05em] text-[color:var(--brand-navy)]">
+              11+Succeed
+            </div>
           </div>
 
-          <Link
-            href="/words"
-            className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-green-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50"
-          >
-            View all words
-          </Link>
-        </div>
+          <div>
+            <h3 className="text-xs font-extrabold uppercase tracking-[0.16em] text-slate-800">
+              Our Services
+            </h3>
+            <ul className="mt-4 space-y-2 text-sm">
+              {serviceLinks.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
 
-        {errorMessage && (
-          <p className="mb-4 text-red-600">Error: {errorMessage}</p>
-        )}
+          <div id="about">
+            <h3 className="text-xs font-extrabold uppercase tracking-[0.16em] text-slate-800">
+              About Us
+            </h3>
+            <ul className="mt-4 space-y-2 text-sm">
+              {aboutLinks.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          {words?.map((word) => (
-            <Link
-              key={word.id}
-              href={`/words/${word.slug}`}
-              className="block rounded-xl border bg-white p-5 shadow-sm transition hover:shadow-md"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <h4 className="text-lg font-semibold text-slate-900">
-                  {word.word}
-                </h4>
-
-                {word.premium_only && (
-                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700">
-                    Premium
-                  </span>
-                )}
-              </div>
-
-              <p className="mt-2 text-slate-700">{word.definition}</p>
-
-              {word.example_sentence && (
-                <p className="mt-3 text-sm text-slate-500">
-                  Example: {word.example_sentence}
-                </p>
-              )}
-
-              <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-500">
-                {word.difficulty && (
-                  <span className="rounded bg-slate-100 px-2 py-1">
-                    Difficulty: {word.difficulty}
-                  </span>
-                )}
-
-                {word.topic && (
-                  <span className="rounded bg-slate-100 px-2 py-1">
-                    Topic: {word.topic}
-                  </span>
-                )}
-              </div>
-            </Link>
-          ))}
+          <div id="contact">
+            <h3 className="text-xs font-extrabold uppercase tracking-[0.16em] text-slate-800">
+              Contact
+            </h3>
+            <div className="mt-4 space-y-2 text-sm leading-7">
+              <p>11plussucceed@gmail.com</p>
+              <p>+44 (0)7553 766386</p>
+              <p>www.11plussucceed.com</p>
+              <p className="pt-2">
+                <Link
+                  href="/quiz"
+                  className="font-bold text-[color:var(--brand-navy)] underline underline-offset-4"
+                >
+                  Open the student quiz
+                </Link>
+              </p>
+            </div>
+          </div>
         </div>
       </section>
     </main>
